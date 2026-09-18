@@ -1,5 +1,7 @@
 ﻿using System;
 using System.IO;
+using System.Runtime.InteropServices;
+using System.Threading;
 using System.Windows.Forms;
 
 namespace Keycap
@@ -9,9 +11,28 @@ namespace Keycap
         public static readonly string Dir = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Keycap");
 
+        /// <summary>
+        /// Broadcast by a second launch so the instance already sitting in the
+        /// tray pops its window up, instead of a duplicate process appearing.
+        /// </summary>
+        public static readonly int WmShow = RegisterWindowMessage("KeycapShowWindow");
+
+        static Mutex _only;   // held for the life of the process
+
         [STAThread]
         static void Main(string[] args)
         {
+            bool first;
+            _only = new Mutex(true, "Local\\Keycap.SingleInstance", out first);
+            if (!first)
+            {
+                // Hand our foreground rights over first, otherwise the running
+                // instance is only allowed to flash in the taskbar.
+                AllowSetForegroundWindow(ASFW_ANY);
+                PostMessage(HWND_BROADCAST, WmShow, IntPtr.Zero, IntPtr.Zero);
+                return;
+            }
+
             try
             {
                 Application.EnableVisualStyles();
@@ -23,7 +44,21 @@ namespace Keycap
                 LogError(ex);
                 MessageBox.Show(ex.ToString(), "Keycap");
             }
+            finally
+            {
+                GC.KeepAlive(_only);
+            }
         }
+
+        static readonly IntPtr HWND_BROADCAST = new IntPtr(0xffff);
+        const uint ASFW_ANY = 0xffffffff;
+
+        [DllImport("user32.dll", CharSet = CharSet.Auto)]
+        static extern int RegisterWindowMessage(string name);
+        [DllImport("user32.dll", CharSet = CharSet.Auto)]
+        static extern bool PostMessage(IntPtr hwnd, int msg, IntPtr w, IntPtr l);
+        [DllImport("user32.dll")]
+        static extern bool AllowSetForegroundWindow(uint pid);
 
         static void LogError(Exception ex)
         {

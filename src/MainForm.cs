@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
 namespace Keycap
@@ -154,7 +155,25 @@ namespace Keycap
             Show();
             WindowState = FormWindowState.Normal;
             Activate();
+            try { SetForegroundWindow(Handle); } catch { }
         }
+
+        /// <summary>
+        /// A second launch broadcasts WmShow rather than starting its own
+        /// process, so answer it by surfacing the window we already have.
+        /// </summary>
+        protected override void WndProc(ref Message m)
+        {
+            if (Program.WmShow != 0 && m.Msg == Program.WmShow)
+            {
+                ShowWindow();
+                return;
+            }
+            base.WndProc(ref m);
+        }
+
+        [DllImport("user32.dll")]
+        static extern bool SetForegroundWindow(IntPtr hwnd);
 
         void UpdateTray()
         {
