@@ -1,0 +1,4 @@
+﻿bin/
+backups/
+*.user
+*.suo
