@@ -130,7 +130,19 @@ namespace Keycap
         static float _w, _targetW;    // animated width
         static int _h = 54;
 
-        static Bitmap Render(string message, Sym glyph, Color accent, int w, int h)
+        // The two content layers and how far the cross-fade between them has
+        // got. Switching used to dim the whole pill and bring it back, which
+        // read as a blink; now the pill holds still and only its contents
+        // change hands.
+        static Bitmap _outgoing, _incoming;
+        static float _cross = 1f;     // 1 = the incoming layer owns the pill
+
+        /// <summary>
+        /// Draw the pill. With <paramref name="backdrop"/> false only the icon
+        /// and the text are drawn, on transparency - that layer is what one
+        /// message cross-fades into another, leaving the pill itself steady.
+        /// </summary>
+        static Bitmap Render(string message, Sym glyph, Color accent, int w, int h, bool backdrop)
         {
             Bitmap bmp = new Bitmap(w, h, PixelFormat.Format32bppArgb);
             using (Graphics g = Graphics.FromImage(bmp))
@@ -139,13 +151,17 @@ namespace Keycap
                 g.TextRenderingHint = TextRenderingHint.AntiAlias;   // keeps alpha
                 g.Clear(Color.Transparent);
 
-                RectangleF r = new RectangleF(0.5f, 0.5f, w - 1.5f, h - 1.5f);
-                using (GraphicsPath path = Theme.Rounded(r, Radius))
+                if (backdrop)
                 {
-                    using (SolidBrush b = new SolidBrush(Color.FromArgb(246, Theme.Card)))
-                        g.FillPath(b, path);
-                    using (Pen p = new Pen(Color.FromArgb(150, Theme.Border), 1f))
-                        g.DrawPath(p, path);
+                    RectangleF r = new RectangleF(0.5f, 0.5f, w - 1.5f, h - 1.5f);
+                    using (GraphicsPath path = Theme.Rounded(r, Radius))
+                    {
+                        using (SolidBrush b = new SolidBrush(Color.FromArgb(246, Theme.Card)))
+                            g.FillPath(b, path);
+                        using (Pen p = new Pen(Color.FromArgb(150, Theme.Border), 1f))
+                            g.DrawPath(p, path);
+                    }
+                    return bmp;
                 }
 
                 float x = 22f;
@@ -193,12 +209,24 @@ namespace Keycap
         {
             if (!Mapping.ShowIndicator) return;
 
+            bool fresh = _form == null;
+            bool changed = fresh || message != _msg || glyph != _glyph;
+
             _msg = message;
             _glyph = glyph;
             _accent = accent;
             _targetW = Measure(message, glyph);
 
-            bool fresh = _form == null;
+            if (changed)
+            {
+                // The layer on screen steps aside for the new one instead of
+                // being replaced between two frames.
+                if (_outgoing != null) _outgoing.Dispose();
+                _outgoing = fresh ? null : _incoming;
+                _incoming = Render(message, glyph, accent, (int)_targetW, _h, false);
+                _cross = fresh ? 1f : 0f;
+            }
+
             if (fresh)
             {
                 _form = new OsdForm();
@@ -208,13 +236,6 @@ namespace Keycap
                 Place();
                 _form.Top = _restY + 8;        // rise into place
                 _form.Show();
-            }
-            else
-            {
-                // Already on screen: keep the same window and morph it, rather
-                // than tearing it down and building another - that swap is what
-                // made switching look like a flicker.
-                _alpha = Math.Max(_alpha - 90, 70);
             }
 
             _targetAlpha = 255;
@@ -254,10 +275,54 @@ namespace Keycap
         {
             if (_form == null) return;
             if (_frame != null) { _frame.Dispose(); _frame = null; }
-            _frame = Render(_msg, _glyph, _accent, Math.Max(40, (int)_w), _h);
+            _frame = Compose(Math.Max(40, (int)_w), _h);
             _form.Size = new Size((int)_w, _h);
             Place();
             _form.Blit(_frame, (byte)_alpha);
+        }
+
+        /// <summary>
+        /// One frame: the steady pill, then whatever mix of the two content
+        /// layers the cross-fade is currently at. They pass each other
+        /// vertically - the old one lifting out, the new one arriving from
+        /// below - which reads as a change rather than a flash.
+        /// </summary>
+        static Bitmap Compose(int w, int h)
+        {
+            Bitmap bmp = new Bitmap(w, h, PixelFormat.Format32bppArgb);
+            using (Graphics g = Graphics.FromImage(bmp))
+            {
+                g.SmoothingMode = SmoothingMode.AntiAlias;
+                g.Clear(Color.Transparent);
+
+                using (Bitmap back = Render("", Sym.None, _accent, w, h, true))
+                    g.DrawImageUnscaled(back, 0, 0);
+
+                // Clip to the pill so a layer wider than the animating window
+                // cannot spill past the rounded edge.
+                RectangleF r = new RectangleF(0.5f, 0.5f, w - 1.5f, h - 1.5f);
+                using (GraphicsPath path = Theme.Rounded(r, Radius))
+                {
+                    g.SetClip(path);
+                    Layer(g, _outgoing, 1f - _cross, -7f * _cross);
+                    Layer(g, _incoming, _cross, 7f * (1f - _cross));
+                    g.ResetClip();
+                }
+            }
+            return bmp;
+        }
+
+        static void Layer(Graphics g, Bitmap b, float alpha, float dy)
+        {
+            if (b == null || alpha <= 0.004f) return;
+            ColorMatrix cm = new ColorMatrix();
+            cm.Matrix33 = alpha > 1f ? 1f : alpha;
+            using (ImageAttributes ia = new ImageAttributes())
+            {
+                ia.SetColorMatrix(cm);
+                g.DrawImage(b, new Rectangle(0, (int)Math.Round(dy), b.Width, b.Height),
+                            0, 0, b.Width, b.Height, GraphicsUnit.Pixel, ia);
+            }
         }
 
         /// <summary>Fade and settle, rather than appearing and vanishing.</summary>
@@ -291,6 +356,13 @@ namespace Keycap
             float dw = _targetW - _w;
             if (Math.Abs(dw) > 0.5f) _w += dw * 0.34f; else _w = _targetW;
 
+            // The hand-over between the two content layers, on the same ease.
+            if (_cross < 1f)
+            {
+                _cross += (1f - _cross) * 0.26f + 0.015f;
+                if (_cross > 0.995f) _cross = 1f;
+            }
+
             int offset = (int)Math.Round(8.0 * (255 - _alpha) / 255.0);
 
             try
@@ -301,8 +373,9 @@ namespace Keycap
             }
             catch { }
 
-            if (_alpha == _targetAlpha && _w == _targetW)
+            if (_alpha == _targetAlpha && _w == _targetW && _cross >= 1f)
             {
+                if (_outgoing != null) { _outgoing.Dispose(); _outgoing = null; }
                 _anim.Stop();
                 if (_targetAlpha == 0 && _pendingHide) Hide();
             }
@@ -321,6 +394,8 @@ namespace Keycap
         {
             if (_anim != null) { _anim.Stop(); }
             if (_frame != null) { _frame.Dispose(); _frame = null; }
+            if (_outgoing != null) { _outgoing.Dispose(); _outgoing = null; }
+            if (_incoming != null) { _incoming.Dispose(); _incoming = null; }
             if (_timer != null) { _timer.Stop(); _timer.Dispose(); _timer = null; }
             if (_form != null)
             {
