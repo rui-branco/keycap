@@ -331,6 +331,37 @@ namespace Keycap
 
         static bool Down(int vk) { return (GetAsyncKeyState(vk) & 0x8000) != 0; }
 
+        /// <summary>The tail of what is being typed, for abbreviations.</summary>
+        static readonly System.Text.StringBuilder _typed = new System.Text.StringBuilder();
+
+        /// <summary>
+        /// Follow the letters going past and report a trigger word the moment
+        /// one is completed.
+        ///
+        /// Only letters and digits are followed. That is all a trigger needs,
+        /// and it avoids asking Windows what character a key produces -
+        /// ToUnicode would advance the layout's dead-key state, so asking
+        /// would break typing an accent.
+        /// </summary>
+        static Mapping.Phrase Track(int vk)
+        {
+            if (vk == VK_BACK)
+            {
+                if (_typed.Length > 0) _typed.Length--;
+                return null;
+            }
+
+            bool typed = (vk >= 0x41 && vk <= 0x5A) || (vk >= 0x30 && vk <= 0x39);
+            if (!typed) { _typed.Length = 0; return null; }   // space, punctuation, arrows...
+
+            _typed.Append(char.ToLowerInvariant((char)vk));
+            if (_typed.Length > 40) _typed.Remove(0, _typed.Length - 40);
+
+            Mapping.Phrase p = Mapping.FindWordAt(_typed.ToString());
+            if (p != null) _typed.Length = 0;
+            return p;
+        }
+
         static int _lastEvent;          // tick of the last real key event
 
         /// <summary>
@@ -437,6 +468,29 @@ namespace Keycap
                     string body = ph.Text;
                     Bare(delegate { Text(body); });
                     _optUsed = true;
+                    return true;
+                }
+            }
+
+            // ---- typed abbreviations ------------------------------------------
+            // A phrase can also be triggered by typing a word. Command and
+            // Option mean the keystroke is a shortcut rather than typing, so
+            // they break the word instead of extending it.
+            if ((pmods & 3) != 0) _typed.Length = 0;
+            else if (Mapping.AnyWords)
+            {
+                Mapping.Phrase word = Track(vk);
+                if (word != null)
+                {
+                    // The trigger's last letter is swallowed, so only the
+                    // letters already on screen have to be rubbed out.
+                    int back = word.Word.Length - 1;
+                    string body = word.Text;
+                    Bare(delegate
+                    {
+                        for (int i = 0; i < back; i++) Tap(VK_BACK);
+                        Text(body);
+                    });
                     return true;
                 }
             }

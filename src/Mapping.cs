@@ -23,17 +23,24 @@ namespace Keycap
             public string Note;
         }
 
-        /// <summary>A key combination that types a phrase.</summary>
+        /// <summary>
+        /// Something that types a block of text: either a key combination, or
+        /// a word that expands as soon as you finish typing it.
+        /// </summary>
         public class Phrase
         {
             public int Mods;      // 1 = Command, 2 = Option, 4 = Shift
             public int Vk;        // the key pressed with them
+            public string Word = "";   // or a typed trigger, instead of a combination
             public string Text;
+
+            public bool IsWord { get { return Word != null && Word.Length > 0; } }
 
             public string Combo
             {
                 get
                 {
+                    if (IsWord) return Word;
                     string s = "";
                     if ((Mods & 1) != 0) s += "Cmd+";
                     if ((Mods & 2) != 0) s += "Opt+";
@@ -196,7 +203,8 @@ namespace Keycap
 
         public static Phrase FindPhrase(int mods, int vk)
         {
-            foreach (Phrase p in Phrases) if (p.Mods == mods && p.Vk == vk) return p;
+            foreach (Phrase p in Phrases)
+                if (!p.IsWord && p.Mods == mods && p.Vk == vk) return p;
             return null;
         }
 
@@ -208,6 +216,53 @@ namespace Keycap
             p.Mods = mods; p.Vk = vk; p.Text = text;
             Phrases.Add(p);
             Save();
+        }
+
+        public static Phrase FindWord(string word)
+        {
+            foreach (Phrase p in Phrases)
+                if (p.IsWord && string.Equals(p.Word, word, StringComparison.OrdinalIgnoreCase))
+                    return p;
+            return null;
+        }
+
+        public static void AddWord(string word, string text)
+        {
+            Phrase existing = FindWord(word);
+            if (existing != null) { existing.Text = text; Save(); return; }
+            Phrase p = new Phrase();
+            p.Word = word; p.Text = text;
+            Phrases.Add(p);
+            Save();
+        }
+
+        /// <summary>True while at least one phrase is triggered by typing.</summary>
+        public static bool AnyWords
+        {
+            get
+            {
+                foreach (Phrase p in Phrases) if (p.IsWord) return true;
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// The phrase whose trigger word has just been completed - that is, the
+        /// one matching the end of what was typed. The longest match wins, so
+        /// "mail" and "mymail" can both exist.
+        /// </summary>
+        public static Phrase FindWordAt(string typed)
+        {
+            Phrase best = null;
+            foreach (Phrase p in Phrases)
+            {
+                if (!p.IsWord || typed.Length < p.Word.Length) continue;
+                if (string.Compare(typed, typed.Length - p.Word.Length,
+                                   p.Word, 0, p.Word.Length,
+                                   StringComparison.OrdinalIgnoreCase) != 0) continue;
+                if (best == null || p.Word.Length > best.Word.Length) best = p;
+            }
+            return best;
         }
 
         public static void RemovePhrase(Phrase p)
@@ -279,6 +334,7 @@ namespace Keycap
             sb.AppendLine("#                       scan <from> <to> <langid>");
             sb.AppendLine("#                       text <from> <plain> <shifted> <langid>");
             sb.AppendLine("#                       phrase <mods> <vk> <text>");
+            sb.AppendLine("#                       word <trigger> <text>");
             sb.AppendLine("indicator " + (ShowIndicator ? "1" : "0"));
             foreach (Mod m in Mods)
                 sb.AppendLine("mod " + m.Src + " " + m.Dst);
@@ -291,7 +347,10 @@ namespace Keycap
                     sb.AppendLine("scan " + r.From + " " + r.To + " " + r.Lang.ToString("X4"));
             }
             foreach (Phrase ph in Phrases)
-                sb.AppendLine("phrase " + ph.Mods + " " + ph.Vk + " " + Escape(ph.Text));
+                if (ph.IsWord)
+                    sb.AppendLine("word " + ph.Word + " " + Escape(ph.Text));
+                else
+                    sb.AppendLine("phrase " + ph.Mods + " " + ph.Vk + " " + Escape(ph.Text));
             System.IO.File.WriteAllText(File_, sb.ToString(), new UTF8Encoding(true));
             Modified = DateTime.Now;
         }
@@ -312,6 +371,13 @@ namespace Keycap
                     else if (p[0] == "mod" && p.Length >= 3) Mods.Add(M(p[1], p[2]));
                     else if (p[0] == "scan" && p.Length >= 4)
                         Scans.Add(R(p[1], p[2], int.Parse(p[3], NumberStyles.HexNumber), ""));
+                    else if (p[0] == "word" && p.Length >= 3)
+                    {
+                        Phrase ph = new Phrase();
+                        ph.Word = p[1];
+                        ph.Text = Unescape(string.Join(" ", p, 2, p.Length - 2));
+                        Phrases.Add(ph);
+                    }
                     else if (p[0] == "phrase" && p.Length >= 4)
                     {
                         Phrase ph = new Phrase();
