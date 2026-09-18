@@ -1,25 +1,79 @@
-# Keycap
+<p align="center">
+  <img src="docs/logo.png" alt="" width="104" height="104">
+</p>
 
-A small Windows app that makes an **Apple Magic Keyboard** behave the way it is
-printed — and the way it behaves on a Mac.
+<h1 align="center">Keycap</h1>
 
-No AutoHotkey, no scripts, no background runtime. One 130 KB executable that
-installs a keyboard hook, draws your board, and lets you change what any key
-does by clicking it.
+<p align="center">
+  <strong>Make an Apple Magic Keyboard behave on Windows.</strong><br>
+  Mac modifiers, the right characters, and a working function row — in a single 130&nbsp;KB executable.
+</p>
 
-![Keycap](docs/window.png)
+<p align="center">
+  <img src="docs/window.png" alt="Keycap showing the Magic Keyboard with every remapped key highlighted" width="722">
+</p>
 
-## Why
+<p align="center">
+  <img alt="Windows" src="https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4">
+  <img alt=".NET Framework 4.8" src="https://img.shields.io/badge/.NET%20Framework-4.8-512BD4">
+  <img alt="No dependencies" src="https://img.shields.io/badge/dependencies-none-success">
+  <img alt="MIT" src="https://img.shields.io/badge/license-MIT-blue">
+</p>
 
-Plug a Magic Keyboard into Windows and two separate things go wrong.
+---
 
-**The modifiers are in the wrong roles.** Command sits where Alt sits on a PC,
-so every `⌘C` you have ever typed does nothing useful.
+Plug a Magic Keyboard into Windows and two separate things are wrong. Command
+sits where Alt sits, so nothing you know works. And several keys type the wrong
+character entirely — the key printed `~` types `º`, the key printed `+` types
+`«`.
 
-**Some keys type the wrong character.** This is the interesting one. Apple's ISO
-boards report a handful of keys on *different scancodes* than Windows layouts
-expect, and two of them — the key below `Esc` and the key left of `Z` — are
-outright **crossed**:
+Keycap fixes both with a keyboard hook, draws your board so you can see what
+every key actually does, and lets you change any of it by clicking a key.
+
+## Features
+
+- **Command → Ctrl** — `⌘C`, `⌘V`, `⌘A`, `⌘Z` behave as they do on macOS
+- **Option → Windows key**, where it physically sits, keeping `⌥←/→` word-jump and `⌥⌫` delete-word
+- **Option+Tab** is the app switcher; **Option** alone opens Start
+- **Scancode fixes** for the keys Apple reports differently, applied per keyboard layout
+- **The function row does what is printed on it** — brightness, Mission Control, Search, microphone mute, media, volume
+- **Phrases** — any combination types a block of text
+- **Keyboard battery**, read from the HID stack
+- **Follows the Windows layout** — switching language switches the board and the remaps together
+- **No installer, no dependencies** — one exe, ~130 KB
+
+## Install
+
+Download `keycap.exe` from [Releases](../../releases) and run it, or build from
+source with `.\build.ps1`.
+
+It lives in the tray — closing the window keeps the remaps running. **Settings**
+has a switch for starting with Windows.
+
+If the keyboard ever feels stuck, press **both Shift keys together**: that
+releases every modifier and turns remapping off.
+
+## Usage
+
+| Action | Result |
+|---|---|
+| Click any key on the board | See what it sends, and change it |
+| `⌘C` `⌘V` `⌘X` `⌘A` `⌘Z` | Copy, paste, cut, select all, undo |
+| `⌘←` `⌘→` | Line start / end |
+| `⌘↑` `⌘↓` | Document start / end |
+| `⌘⌫` | Delete to line start |
+| `⌘Q` / `⌘M` / `⌘Space` | Quit app / minimise / Search |
+| `⌥←` `⌥→` | Jump word by word — add `⇧` to select |
+| `⌥⌫` | Delete previous word |
+| `⌥Tab` | App switcher |
+| `⌥F1`–`F12` | The real function keys |
+| Both `⇧` together | Release everything, remapping off |
+
+## The scancode problem
+
+Apple's ISO boards report a handful of keys on **different scancodes** than
+Windows layouts expect, and two of them — the key below `Esc` and the key left
+of `Z` — are outright crossed:
 
 | Key as printed | Apple sends | pt-PT expects |
 |---|---|---|
@@ -28,93 +82,97 @@ outright **crossed**:
 | `~ ^` | SC028 | SC02B |
 | `\ \|` | SC02B | SC029 |
 | `< >` | SC029 | SC056 |
-| `± §` | SC056 | — not in pt-PT at all |
+| `± §` | SC056 | not in pt-PT at all |
 
-So the key printed `~` types `º`, the key printed `+` types `«`, and chasing
-them one at a time never converges — fixing one just moves the problem. They
-have to be corrected as a set.
+Chasing them one at a time never converges — fixing one just moves the problem,
+because they form a cycle. They have to be corrected as a set.
 
-## What it does
-
-- **Command → Ctrl**, so `⌘C`, `⌘V`, `⌘A`, `⌘Z` work as on macOS.
-- **Option → Windows key**, where it physically sits, while keeping
-  `⌥←/→` word-jump, `⌥⇧←/→` word-select and `⌥⌫` delete-word.
-- **Option+Tab** is the app switcher; **Option** on its own opens Start.
-- **The six scancode fixes**, applied per keyboard layout.
-- **The function row does what is printed on it** — brightness, Mission Control
-  (Task View), Spotlight (Search), dictation (microphone mute), do-not-disturb,
-  transport and volume. Hold Option for the real F1–F12.
-- **Phrases** — any combination can type a block of text.
-- **Battery** for the keyboard, read from the HID stack.
-- **An on-screen indicator** when the microphone is muted.
-
-Scancode fixes are sent as **scancodes**, not characters, so Windows' own layout
+The fixes are sent as **scancodes**, not characters, so Windows' own layout
 engine still handles Shift, AltGr and dead keys — `~` then `a` still gives `ã`.
 
 ## Layouts
 
 The board is described as *positions*, not keys. An XKB-style skeleton (`AE01`,
 `LSGT`, `SPCE`) carries the widths, scancodes and roles; each language supplies
-only the legends. Adding a language is a table, not a new keyboard.
+only the legends, so adding one is a table rather than a new keyboard.
 
-Both physical forms are supported — ISO and ANSI — and Keycap follows the
-**Windows keyboard layout**: the picker lists what Windows actually has
-installed, opens on the active one, and switching it switches Windows too.
-
-Ships with Portuguese, Spanish, German, French, British and US.
-
-## Install
-
-Grab `keycap.exe` from [Releases](../../releases) and run it. It lives in the
-tray; closing the window keeps the remaps running. Settings has a switch for
-starting with Windows.
-
-If the keyboard ever feels stuck, **press both Shift keys together** — that
-releases every modifier and turns remapping off.
+Both physical forms are supported — ISO and ANSI — and the picker lists the
+layouts Windows actually has installed, opens on the active one, and switches
+Windows when you change it. Ships with Portuguese, Spanish, German, French,
+British and US.
 
 ## Build
-
-No SDK, no MSBuild, no package manager — just the .NET Framework compiler that
-ships with Windows:
 
 ```powershell
 .\build.ps1
 ```
 
-Produces `bin\keycap.exe`. The icon is generated by `tools\make-icon.ps1` if
-missing.
+No SDK and no NuGet. It compiles with the C# compiler that ships in Windows
+(`C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe`) against .NET
+Framework 4.8, present on every Windows 10 and 11 install.
 
-## Layout of the source
+That compiler is the **legacy** one — C# 5 only. No string interpolation, no
+null-conditional operators, no `nameof`. Source is **UTF-8 with BOM**: without
+the BOM it reads files as the system ANSI code page and every accented glyph
+becomes mojibake.
+
+| Script | Purpose |
+|---|---|
+| `build.ps1` | Compiles `bin\keycap.exe` |
+| `tools\make-icon.ps1` | Generates `assets\keycap.ico` from code — no binary source asset |
+| `tools\fix-encoding.py` | Repairs source double-encoded by a PowerShell round-trip |
+
+## How it works
+
+A low-level keyboard hook (`WH_KEYBOARD_LL`) sees every key before the focused
+application does. Keycap swallows the ones it handles and injects replacements
+with `SendInput`.
+
+Two rules keep that honest. Everything injected is tagged in `dwExtraInfo`, so
+the hook ignores its own output and cannot feed itself. And when a shortcut
+fires, whatever modifier is being held on the OS's behalf is lifted first and
+restored after — otherwise `⌘←` would arrive as `Ctrl+Home` rather than `Home`.
+
+### Stuck modifiers
+
+Holding Command means Keycap is holding **Ctrl** down for you. If a key-up is
+ever missed — a window stealing focus mid-press is enough — that Ctrl stays
+down and the keyboard appears dead.
+
+This cannot be checked against the hardware: the modifiers are *swallowed*, so
+Windows never records them and `GetAsyncKeyState` reports them as up even while
+held. Recovery is by idle time instead — hold something with no key for a few
+seconds and it lets go — plus both Shift keys as a manual release.
+
+### Microphone
+
+`F5` mutes the **default communications capture device** through Core Audio —
+the one a call app actually picks up. Note that this is an endpoint-level mute:
+Teams will receive silence, but its own mute button will not know, so its UI
+will still show you as unmuted.
+
+### The Globe key
+
+Not bindable. Raw Input on both the keyboard collection and Apple's vendor page
+`0xFF00` receives nothing from it — it is consumed inside the keyboard and never
+reaches Windows.
+
+## Config
+
+`%LOCALAPPDATA%\Keycap\mapping.txt` — plain text, hand-editable, with a backup
+taken before every change Keycap makes.
 
 ```
-src\Program.cs        entry point, error log
-src\MainForm.cs       the window
-src\Hook.cs           the remapper: WH_KEYBOARD_LL and everything it does
-src\Mapping.cs        what is remapped, and its config file
-src\KeyboardView.cs   the board, drawn on a 15-unit grid
-src\Layouts.cs        position skeletons (ISO/ANSI) and per-language legends
-src\InputLang.cs      reads and switches the Windows keyboard layout
-src\Audio.cs          microphone mute over Core Audio
-src\Osd.cs            the on-screen indicator (layered window, per-pixel alpha)
-src\Hid.cs            keyboard battery over setupapi/hid
-src\Icons.cs          function-row pictograms
-src\Ui.cs             theme and shared controls
-src\Updater.cs        checks GitHub releases, installs on click
+mod LWin LCtrl
+mod LAlt LWin
+scan 00D 01A 0816
+text 056 ± § 0816
+phrase 5 69 hello there
+indicator 1
 ```
 
-Config lives at `%LOCALAPPDATA%\Keycap\mapping.txt` — plain text, hand-editable,
-with a backup taken before every change Keycap makes.
+Unhandled errors append to `%LOCALAPPDATA%\Keycap\error.log`.
 
-## Notes for anyone poking at it
+## License
 
-- Source files are **UTF-8 with BOM**. `csc` otherwise reads them as ANSI and
-  every accented glyph becomes mojibake.
-- The hook **swallows** Command and Option, so `GetAsyncKeyState` cannot be used
-  to tell whether they are held — Windows never sees them. Stuck modifiers are
-  recovered by idle timeout instead.
-- The Globe key is not bindable: it never reaches Windows. Raw Input on both the
-  keyboard collection and Apple's vendor page `0xFF00` receives nothing from it.
-
-## Licence
-
-MIT.
+MIT
