@@ -673,7 +673,7 @@ namespace Keycap
                     case VK_RIGHT: Bare(delegate { Tap(VK_END); }); return true;
                     case VK_UP: Bare(delegate { TapCtrl(VK_HOME); }); return true;
                     case VK_DOWN: Bare(delegate { TapCtrl(VK_END); }); return true;
-                    case VK_BACK: Bare(delegate { Tap(VK_HOME, VK_LSHIFT); Tap(VK_BACK); }); return true;
+                    case VK_BACK: Bare(delegate { Tap(VK_DELETE); }); return true;   // the Del key the board does not have
                     case VK_Q: Bare(delegate { Tap(0x73, 0xA4); }); return true;      // Alt+F4
                     case VK_M: Bare(delegate { Tap(VK_DOWN, VK_LWIN); }); return true;
                     case VK_SPACE: Bare(delegate { Tap(VK_S, VK_LWIN); }); return true;

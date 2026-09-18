@@ -14,7 +14,7 @@ namespace Keycap
             new string[] { "Cmd+Left / Right",      "line start / end" },
             new string[] { "Cmd+Up / Down",         "document start / end" },
             new string[] { "Cmd+Shift+arrows",      "select to that point" },
-            new string[] { "Cmd+Delete",            "delete to line start" },
+            new string[] { "Cmd+Delete",            "forward delete" },
             new string[] { "Cmd+Q",                 "quit app" },
             new string[] { "Cmd+M",                 "minimise window" },
             new string[] { "Cmd+Space",             "Windows Search" },
