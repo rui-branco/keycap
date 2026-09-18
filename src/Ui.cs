@@ -252,6 +252,25 @@ namespace Keycap
         public string DeviceName = "";
         /// <summary>Draw the meter alone, with no pill behind it.</summary>
         public bool Flat = false;
+        /// <summary>Percentage only - for a header too narrow for the name.</summary>
+        public bool Compact = false;
+
+        /// <summary>Width this needs to show its text without clipping.</summary>
+        public int PreferredWidth()
+        {
+            int meter = Flat ? 0 : 12;
+            return meter + 26 + 10 + TextRenderer.MeasureText(Caption, Font).Width + 14;
+        }
+
+        string Caption
+        {
+            get
+            {
+                if (Percent < 0) return Compact ? "--" : "no battery data";
+                if (Compact) return Percent.ToString() + "%";
+                return Percent.ToString() + "%   " + DeviceName;
+            }
+        }
 
         public BatteryPill()
         {
@@ -304,10 +323,7 @@ namespace Keycap
                     g.FillPath(b, p);
             }
 
-            string text = Percent < 0
-                ? "no battery data"
-                : Percent.ToString() + "%   " + DeviceName;
-            TextRenderer.DrawText(g, text, Font,
+            TextRenderer.DrawText(g, Caption, Font,
                 new Rectangle((int)(x + w + 10), 0, Width - (int)(x + w) - 14, Height),
                 Percent < 0 ? Theme.Dim : Theme.Text,
                 TextFormatFlags.Left | TextFormatFlags.VerticalCenter

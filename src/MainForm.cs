@@ -34,9 +34,26 @@ namespace Keycap
             new System.Collections.Generic.List<string[]>();   // label, value
         string _editKind = "";                                  // scan | mod
         bool _exiting;
+        static MainForm _instance;
+
+        /// <summary>
+        /// A real exit, as opposed to closing the window - which only hides it.
+        /// The updater needs this: its handover script waits for the process.
+        /// </summary>
+        public static void Quit()
+        {
+            if (_instance != null)
+            {
+                _instance._exiting = true;
+                try { _instance.Close(); }
+                catch { }
+            }
+            Application.Exit();
+        }
 
         public MainForm()
         {
+            _instance = this;
             Text = "Keycap";
             BackColor = Theme.Back;
             ForeColor = Theme.Text;
@@ -127,8 +144,8 @@ namespace Keycap
         {
             if (_update == null) return;
             _update.Visible = Updater.Available;
-            _update.Text = "Update to " + Updater.LatestTag;
-            _update.Width = TextRenderer.MeasureText(_update.Text, _update.Font).Width + 28;
+            _update.Text = "Update to " + Updater.PrettyTag(Updater.LatestTag);
+            Fit(_update);
             DoLayoutAll();
         }
 
@@ -208,13 +225,11 @@ namespace Keycap
             _update.Visible = false;
             _update.Click += delegate
             {
-                Toast("downloading " + Updater.LatestTag + "...", Theme.Dim);
+                Toast("downloading " + Updater.PrettyTag(Updater.LatestTag) + "...", Theme.Dim);
                 Application.DoEvents();
                 string err = Updater.Install();
                 if (err.Length > 0) { Toast(err, Theme.Bad); return; }
-                _exiting = true;
-                Close();
-                Application.Exit();
+                Quit();
             };
 
             Updater.Checked += delegate
@@ -306,11 +321,21 @@ namespace Keycap
             b.Text = text;
             b.Primary = primary;
             b.Font = Theme.Font(9f, FontStyle.Regular);
-            b.Width = primary ? 92 : 98;
             b.Height = 32;
             b.Backdrop = Theme.Back;
             _headerCard.Controls.Add(b);
+            Fit(b);
             return b;
+        }
+
+        /// <summary>
+        /// Size a header button to its own label. Fixed widths were what made
+        /// the header collide with the title on a narrow window - "Stop" does
+        /// not need the same room as "Open config".
+        /// </summary>
+        static void Fit(FlatButton b)
+        {
+            b.Width = Math.Max(64, TextRenderer.MeasureText(b.Text, b.Font).Width + 26);
         }
 
         void BuildBoard()
@@ -485,44 +510,151 @@ namespace Keycap
             return 12 + 16 + 6 + rows * 20 + 14;
         }
 
+        /// <summary>The header buttons, left to right.</summary>
+        FlatButton[] Bar()
+        {
+            return new FlatButton[] { _settings, _phrases, _open, _stop, _start, _reload };
+        }
+
+        /// <summary>How much room the whole button bar takes on one line.</summary>
+        int BarWidth() { return BarWidth(_update.Visible); }
+
+        int BarWidth(bool withUpdate)
+        {
+            FlatButton[] bar = Bar();
+            int w = 0;
+            for (int i = 0; i < bar.Length; i++)
+            {
+                if (w > 0) w += 8;
+                w += bar[i].Width;
+            }
+            if (withUpdate) w += 10 + _update.Width;
+            return w;
+        }
+
+        /// <summary>
+        /// The width at which the header still fits on a single row - title,
+        /// battery, room for a status line and the buttons. This is the
+        /// window's minimum, so the normal case is never a broken header.
+        /// The Update button is left out: it is occasional, and it is allowed
+        /// to push the buttons onto a second row rather than force a resize.
+        /// </summary>
+        int HeaderOneRowWidth()
+        {
+            bool was = _battery.Compact;
+            _battery.Compact = true;
+            int mini = _battery.PreferredWidth();
+            _battery.Compact = was;
+
+            return CardPad + 32 + 12 + _title.Width   // mark, gap, title
+                 + 20 + mini                          // battery
+                 + 18 + 90                            // status line
+                 + 24 + BarWidth(false) + CardPad;    // buttons
+        }
+
+        /// <summary>
+        /// Lay the header out for the width it actually has, and report the
+        /// height it needed.
+        ///
+        /// Three tiers, in order: everything on one row; the battery drops the
+        /// device name; the buttons take a row of their own. The old code just
+        /// packed buttons leftward from the edge, so on a narrow window they
+        /// were drawn straight over the title and the battery.
+        /// </summary>
+        int LayoutHeader(int w)
+        {
+            const int MarkSize = 32;
+            const int RowH = 56;
+            const int G = 8;        // between buttons
+            const int Toast = 90;   // keep this much room for status text
+
+            FlatButton[] bar = Bar();
+            int barW = BarWidth();
+
+            int titleLeft = CardPad + MarkSize + 12;
+            int titleEnd = titleLeft + _title.Width;
+
+            _battery.Compact = false;
+            int fullBat = _battery.PreferredWidth();
+            _battery.Compact = true;
+            int miniBat = _battery.PreferredWidth();
+
+            int fixedW = titleEnd + 20 + 18 + Toast + 24 + barW + CardPad;
+            bool oneRow = fixedW + fullBat <= w;
+            bool compact = false;
+            if (!oneRow && fixedW + miniBat <= w) { oneRow = true; compact = true; }
+
+            _battery.Compact = compact;
+            _battery.Invalidate();
+            int batW = compact ? miniBat : fullBat;
+
+            int markY = 12;
+            _mark.SetBounds(CardPad, markY, MarkSize, MarkSize);
+            _title.Location = new Point(titleLeft, markY + (MarkSize - _title.Height) / 2);
+            _battery.SetBounds(titleEnd + 20,
+                               markY + (MarkSize - _battery.Height) / 2,
+                               batW, _battery.Height);
+
+            // Buttons pack from the right edge, on row one or row two.
+            int by = oneRow ? 9 : RowH - 4;
+            int x = w - CardPad;
+            for (int i = bar.Length - 1; i >= 0; i--)
+            {
+                x -= bar[i].Width;
+                bar[i].Location = new Point(x, by);
+                x -= G;
+            }
+            if (_update.Visible)
+            {
+                x -= 2 + _update.Width;
+                _update.Location = new Point(x, by);
+            }
+
+            int chipY = markY + (MarkSize - 28) / 2;
+            _layoutPick.SetBounds(CardPad, chipY, _layoutPick.PreferredWidth(), 28);
+
+            int toastX = _battery.Right + 18;
+            int toastR = oneRow ? x + G - 16 : w - CardPad;
+            _toast.SetBounds(toastX, chipY, Math.Max(40, toastR - toastX), 28);
+
+            return oneRow ? RowH : RowH + 36;
+        }
+
         void DoLayoutAll()
         {
             if (_board == null || _refCard == null) return;
+            if (_laying) return;
 
+            // With AutoScroll on, a child's Location is where it is drawn, not
+            // where it sits on the page. Laying out while scrolled stores
+            // scrolled coordinates as if they were page ones, and the next
+            // scroll then shifts everything a second time - which is why the
+            // whole page slid down after a resize. Rewind, lay out, scroll back.
+            _laying = true;
+            int scroll = -AutoScrollPosition.Y;
+            try
+            {
+                if (scroll != 0) AutoScrollPosition = Point.Empty;
+                LayoutPage();
+            }
+            finally
+            {
+                if (scroll != 0) AutoScrollPosition = new Point(0, scroll);
+                _laying = false;
+            }
+        }
+
+        bool _laying;
+
+        void LayoutPage()
+        {
             int w = ClientSize.Width - Pad * 2;
 
             // --- header ------------------------------------------------------
-            const int HeaderH = 56;
-            _headerCard.SetBounds(Pad, Pad, w, HeaderH);
+            int headerH = LayoutHeader(w);
+            _headerCard.SetBounds(Pad, Pad, w, headerH);
 
-            const int MarkSize = 32;
-            int markY = 12;
-            _mark.SetBounds(CardPad, markY, MarkSize, MarkSize);
-            _title.Location = new Point(CardPad + MarkSize + 12,
-                                        markY + (MarkSize - _title.Height) / 2);
-
-            int by = 9;
-            _reload.Location = new Point(w - CardPad - _reload.Width, by);
-            _start.Location = new Point(_reload.Left - 8 - _start.Width, by);
-            _stop.Location = new Point(_start.Left - 8 - _stop.Width, by);
-            _open.Location = new Point(_stop.Left - 8 - _open.Width, by);
-            _phrases.Location = new Point(_open.Left - 8 - _phrases.Width, by);
-            _settings.Location = new Point(_phrases.Left - 8 - _settings.Width, by);
-            if (_update.Visible)
-                _update.Location = new Point(_settings.Left - 10 - _update.Width, by);
-
-            // The layout picker lives on the spacebar now, so the toast simply
-              // continues the title row.
-            int chipY = markY + (MarkSize - 28) / 2;
-            _battery.SetBounds(_title.Right + 20,
-                               markY + (MarkSize - _battery.Height) / 2,
-                               210, _battery.Height);
-            _layoutPick.SetBounds(CardPad, chipY, _layoutPick.PreferredWidth(), 28);
-            int toastX = _battery.Right + 18;
-            _toast.SetBounds(toastX, chipY,
-                             Math.Max(80, _open.Left - 16 - toastX), 28);
-
-            int top = Pad + HeaderH + Gap;
+            int top = Pad + headerH + Gap;
             _legend.SetBounds(Pad + 2, top, w - 4, 20);
             top += 26;
 
@@ -532,9 +664,15 @@ namespace Keycap
             int refH = RefHeight();
 
             int needed = top + boardNat + Gap + 6 + detailH + Gap + 8 + refH + Pad;
-            // The window is free to be any size: a floor just large enough for
-            // the board to stay legible, and anything shorter scrolls.
-            Size min = new Size(720, 420);
+            // The floor is the wider of two things: a header that still fits on
+            // one row, and a board whose legends still fit inside the keycaps -
+            // below roughly 900px "control" starts coming out as "co...". So
+            // the window cannot be dragged into a broken state at all. Height
+            // is free: anything shorter simply scrolls.
+            // MinimumSize is the outer window, so the border has to be added on
+            // top of the content width or the floor lands a dozen pixels short.
+            int chrome = Width - ClientSize.Width;
+            Size min = new Size(Math.Max(900, HeaderOneRowWidth() + Pad * 2 + chrome), 460);
             if (MinimumSize != min) MinimumSize = min;
             Size want = new Size(0, needed);
             if (AutoScrollMinSize != want) AutoScrollMinSize = want;
