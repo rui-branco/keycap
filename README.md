@@ -37,10 +37,11 @@ every key actually does, and lets you change any of it by clicking a key.
 - **Option+Tab** is the app switcher; **Option** alone opens Start
 - **Scancode fixes** for the keys Apple reports differently, applied per keyboard layout
 - **The function row does what is printed on it** — brightness, Mission Control, Search, microphone mute, media, volume
-- **Phrases** — any combination types a block of text
+- **Phrases** — a key combination, or a word that expands as you type it
 - **Keyboard battery**, read from the HID stack
 - **Follows the Windows layout** — switching language switches the board and the remaps together
-- **No installer, no dependencies** — one exe, ~130 KB
+- **Updates itself** — it checks on startup and installs on a click
+- **No installer, no dependencies** — one exe, ~135 KB
 
 ## Install
 
@@ -48,7 +49,9 @@ Download `keycap.exe` from [Releases](../../releases) and run it, or build from
 source with `.\build.ps1`.
 
 It lives in the tray — closing the window keeps the remaps running. **Settings**
-has a switch for starting with Windows.
+has a switch for starting with Windows, and updates: Keycap looks for a newer
+build on startup, and installs one on a click — it downloads, hands over to a
+small script, and restarts itself on the new version.
 
 If the keyboard ever feels stuck, press **both Shift keys together**: that
 releases every modifier and turns remapping off.
@@ -68,6 +71,25 @@ releases every modifier and turns remapping off.
 | `⌥Tab` | App switcher |
 | `⌥F1`–`F12` | The real function keys |
 | Both `⇧` together | Release everything, remapping off |
+
+## Phrases
+
+A phrase is a block of text with a trigger, and the trigger is either kind:
+
+| Trigger | How it fires |
+|---|---|
+| A combination — `⌘⌥M` | when you press it |
+| A word — `mymail` | as soon as you finish typing it, anywhere |
+
+Both are captured the same way: click the box and do the thing. Press the keys
+for a combination, or type the word for a word.
+
+A typed trigger rubs itself out — the last keystroke is swallowed, the letters
+already on screen are backspaced away, and the phrase is typed in their place.
+Only letters and digits are tracked, deliberately: asking Windows which
+character a key produces (`ToUnicode`) advances the layout's dead-key state, so
+asking would break typing `ã`. Command or Option breaks the word rather than
+extending it, and the longest match wins, so `mail` and `mymail` can coexist.
 
 ## The scancode problem
 
@@ -168,6 +190,7 @@ mod LAlt LWin
 scan 00D 01A 0816
 text 056 ± § 0816
 phrase 5 69 hello there
+word mymail me@example.com
 indicator 1
 ```
 
