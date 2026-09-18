@@ -10,6 +10,7 @@ namespace Keycap
     {
         public static readonly List<string[]> All = new List<string[]> {
             new string[] { "Cmd+C / V / X / A / Z", "copy, paste, cut, select all, undo" },
+            new string[] { "Cmd+Shift+V",           "clipboard history" },
             new string[] { "Cmd+Left / Right",      "line start / end" },
             new string[] { "Cmd+Up / Down",         "document start / end" },
             new string[] { "Cmd+Shift+arrows",      "select to that point" },

@@ -677,6 +677,18 @@ namespace Keycap
                     case VK_Q: Bare(delegate { Tap(0x73, 0xA4); }); return true;      // Alt+F4
                     case VK_M: Bare(delegate { Tap(VK_DOWN, VK_LWIN); }); return true;
                     case VK_SPACE: Bare(delegate { Tap(VK_S, VK_LWIN); }); return true;
+                    case 0x56:  // Cmd+Shift+V -> Win+V (clipboard history)
+                        if (Shift)
+                        {
+                            Bare(delegate
+                            {
+                                Key(VK_LSHIFT, false);
+                                Tap(0x56, VK_LWIN);
+                                Key(VK_LSHIFT, true);
+                            });
+                            return true;
+                        }
+                        break;
                 }
                 return false;   // everything else is a plain Ctrl shortcut
             }
