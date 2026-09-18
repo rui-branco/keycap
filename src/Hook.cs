@@ -122,22 +122,64 @@ namespace Keycap
         public static void Start()
         {
             if (_hook != IntPtr.Zero) return;
+            StartWorker();
             _proc = Callback;
             _hook = SetWindowsHookEx(WH_KEYBOARD_LL, _proc,
                                      GetModuleHandle(null), 0);
+            _lastEvent = Environment.TickCount;
+            _rearmed = Environment.TickCount;
 
             // A key-up can be missed entirely - a focus change during a press is
             // enough - and then nothing arrives to trigger Reconcile. This sweeps
-            // for that case while the keyboard is idle.
+            // for that case while the keyboard is idle, and checks the hook is
+            // still installed at all.
             if (_watchdog == null)
             {
                 _watchdog = new Timer();
                 _watchdog.Interval = 700;
-                _watchdog.Tick += delegate { Reconcile(); };
+                _watchdog.Tick += delegate { Reconcile(); CheckAlive(); };
             }
             _watchdog.Start();
 
             Raise();
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        struct LASTINPUTINFO { public uint cbSize; public uint dwTime; }
+
+        [DllImport("user32.dll")]
+        static extern bool GetLastInputInfo(ref LASTINPUTINFO plii);
+
+        static int _rearmed;
+
+        /// <summary>
+        /// Put the hook back when Windows has quietly taken it away.
+        ///
+        /// It does that to any callback that overruns the low-level hook
+        /// timeout, and it tells nobody: the handle stays valid-looking, no
+        /// error is raised, and the keyboard simply stops being remapped. The
+        /// tell is the system seeing input that the hook did not.
+        /// </summary>
+        static void CheckAlive()
+        {
+            if (_hook == IntPtr.Zero) return;
+            if (_cmdDown || _optDown || _winHeld || _altTabbing) return;  // mid-chord
+            if (unchecked(Environment.TickCount - _rearmed) < 3000) return;
+
+            LASTINPUTINFO li = new LASTINPUTINFO();
+            li.cbSize = (uint)Marshal.SizeOf(typeof(LASTINPUTINFO));
+            if (!GetLastInputInfo(ref li)) return;
+
+            // Mouse movement also counts as input here, so this is evidence
+            // rather than proof - but re-arming costs nothing either way.
+            bool silent = unchecked((int)li.dwTime - _lastEvent) > 1500;
+            bool stale = unchecked(Environment.TickCount - _rearmed) > 30000;
+            if (!silent && !stale) return;
+
+            UnhookWindowsHookEx(_hook);
+            _hook = SetWindowsHookEx(WH_KEYBOARD_LL, _proc, GetModuleHandle(null), 0);
+            _rearmed = Environment.TickCount;
+            _lastEvent = Environment.TickCount;
         }
 
         /// <summary>Let go of everything and stop remapping.</summary>
@@ -269,15 +311,61 @@ namespace Keycap
         /// Run an action with our injected modifiers lifted, then restore them.
         /// Without this, Command+Left would arrive as Ctrl+Home because Command
         /// is holding Ctrl down on the OS side.
+        ///
+        /// The work is handed to a worker thread rather than done here. A
+        /// low-level hook callback has a few hundred milliseconds to return -
+        /// Windows silently unhooks one that overruns, with no error and no
+        /// notification, and the app then sits there doing nothing. Typing a
+        /// phrase from inside the callback was more than enough to trip it.
         /// </summary>
         static void Bare(Action act)
         {
-            bool cmd = _cmdDown, win = _winHeld;
-            if (cmd) Key(VK_LCONTROL, false);
-            if (win) Key(VK_LWIN, false);
-            act();
-            if (win) Key(VK_LWIN, true);
-            if (cmd) Key(VK_LCONTROL, true);
+            bool cmd = _cmdDown, win = _winHeld;   // read on the hook thread
+            Post(delegate
+            {
+                if (cmd) Key(VK_LCONTROL, false);
+                if (win) Key(VK_LWIN, false);
+                act();
+                if (win) Key(VK_LWIN, true);
+                if (cmd) Key(VK_LCONTROL, true);
+            });
+        }
+
+        // ---- the injection thread -------------------------------------------
+        // One thread, one queue, so injections still happen in the order the
+        // keystrokes arrived.
+        static readonly Queue<Action> _work = new Queue<Action>();
+        static System.Threading.Thread _worker;
+
+        static void Post(Action act)
+        {
+            lock (_work)
+            {
+                _work.Enqueue(act);
+                System.Threading.Monitor.Pulse(_work);
+            }
+        }
+
+        static void StartWorker()
+        {
+            if (_worker != null) return;
+            _worker = new System.Threading.Thread(delegate ()
+            {
+                for (; ; )
+                {
+                    Action a;
+                    lock (_work)
+                    {
+                        while (_work.Count == 0) System.Threading.Monitor.Wait(_work);
+                        a = _work.Dequeue();
+                    }
+                    try { a(); }
+                    catch { }        // one bad phrase must not take the thread down
+                }
+            });
+            _worker.IsBackground = true;
+            _worker.Name = "keycap-inject";
+            _worker.Start();
         }
 
         static bool Shift
