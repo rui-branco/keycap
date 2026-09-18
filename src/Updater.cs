@@ -24,6 +24,12 @@ namespace Keycap
         public static string DownloadUrl = "";
         public static bool Available;
 
+        /// <summary>A check is in flight, so the UI can say so.</summary>
+        public static bool Checking;
+
+        /// <summary>Why the last check failed, empty when it did not.</summary>
+        public static string LastError = "";
+
         public static event EventHandler Checked;
 
         public static Version Current
@@ -55,17 +61,42 @@ namespace Keycap
             return new Version(n[0], n[1], n[2], n[3]);
         }
 
-        /// <summary>Ask GitHub, off the UI thread. Silent on any failure.</summary>
+        /// <summary>
+        /// Look for a newer build, off the UI thread. Never throws, and always
+        /// raises <see cref="Checked"/> - the settings panel waits on it to
+        /// stop saying "checking", success or not.
+        /// </summary>
         public static void CheckAsync()
         {
-            if (string.IsNullOrEmpty(Repo)) return;
+            if (string.IsNullOrEmpty(Repo) || Checking) return;
+            Checking = true;
+            LastError = "";
             Thread t = new Thread(delegate ()
             {
                 try { Check(); }
-                catch { }
+                catch (Exception ex) { LastError = ex.Message; }
+                finally
+                {
+                    Checking = false;
+                    if (Checked != null) Checked(null, EventArgs.Empty);
+                }
             });
             t.IsBackground = true;
             t.Start();
+        }
+
+        /// <summary>The version without the trailing zeros nobody ships.</summary>
+        public static string Pretty(Version v)
+        {
+            if (v == null) return "";
+            return v.Major + "." + v.Minor + "." + v.Build;
+        }
+
+        /// <summary>A release tag the way a person would write it.</summary>
+        public static string PrettyTag(string tag)
+        {
+            if (string.IsNullOrEmpty(tag)) return "";
+            return tag.TrimStart('v', 'V').Trim();
         }
 
         static void Check()
@@ -113,8 +144,6 @@ namespace Keycap
             LatestTag = tag;
             DownloadUrl = asset;
             Available = latest > Current && asset.Length > 0;
-
-            if (Checked != null) Checked(null, EventArgs.Empty);
         }
 
         /// <summary>
