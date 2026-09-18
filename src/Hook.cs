@@ -137,11 +137,92 @@ namespace Keycap
             {
                 _watchdog = new Timer();
                 _watchdog.Interval = 700;
-                _watchdog.Tick += delegate { Reconcile(); CheckAlive(); };
+                _watchdog.Tick += delegate
+                {
+                    if (_rearmWanted) { _rearmWanted = false; Rearm(); }
+                    Reconcile();
+                    CheckAlive();
+                };
             }
             _watchdog.Start();
 
+            Wire();
             Raise();
+        }
+
+        // ---- locking and waking ---------------------------------------------
+
+        static bool _wired;
+        static volatile bool _rearmWanted;   // set off-thread, acted on by the watchdog
+
+        /// <summary>
+        /// Lock the screen and the hook goes quiet. The lock screen is its own
+        /// desktop and our hook is not on it, so nothing arrives - including
+        /// the key-ups for whatever was held when the screen went away. Coming
+        /// back, Windows does not reliably start feeding the hook again.
+        ///
+        /// CheckAlive does eventually catch that, but only once it has seen
+        /// input the hook missed - which means typing a few unremapped keys
+        /// first. A session or power transition is the announcement, so re-arm
+        /// on those instead and the keyboard is mapped before the desktop is
+        /// back.
+        ///
+        /// These fire on the SystemEvents thread, so they only raise a flag:
+        /// the hook has to be installed from the thread that owns it.
+        /// </summary>
+        static void Wire()
+        {
+            if (_wired) return;
+            Microsoft.Win32.SystemEvents.SessionSwitch += OnSession;
+            Microsoft.Win32.SystemEvents.PowerModeChanged += OnPower;
+            _wired = true;
+        }
+
+        static void Unwire()
+        {
+            if (!_wired) return;
+            Microsoft.Win32.SystemEvents.SessionSwitch -= OnSession;
+            Microsoft.Win32.SystemEvents.PowerModeChanged -= OnPower;
+            _wired = false;
+        }
+
+        static void OnSession(object sender, Microsoft.Win32.SessionSwitchEventArgs e)
+        {
+            switch (e.Reason)
+            {
+                case Microsoft.Win32.SessionSwitchReason.SessionLock:
+                case Microsoft.Win32.SessionSwitchReason.SessionUnlock:
+                case Microsoft.Win32.SessionSwitchReason.SessionLogon:
+                case Microsoft.Win32.SessionSwitchReason.ConsoleConnect:
+                case Microsoft.Win32.SessionSwitchReason.RemoteConnect:
+                    _rearmWanted = true;
+                    break;
+            }
+        }
+
+        static void OnPower(object sender, Microsoft.Win32.PowerModeChangedEventArgs e)
+        {
+            if (e.Mode == Microsoft.Win32.PowerModes.Resume) _rearmWanted = true;
+        }
+
+        /// <summary>
+        /// Take the hook down and put it straight back, on the thread that owns
+        /// it. Whatever we were holding goes first: after a lock the key-ups
+        /// are lost, and a Ctrl left down is worse than no remapping at all.
+        /// </summary>
+        static void Rearm()
+        {
+            if (_hook == IntPtr.Zero) return;
+            ReleaseAll();
+            UnhookWindowsHookEx(_hook);
+            _hook = SetWindowsHookEx(WH_KEYBOARD_LL, _proc, GetModuleHandle(null), 0);
+            _rearmed = Environment.TickCount;
+            _lastEvent = Environment.TickCount;
+            _typed.Length = 0;          // half a word from before the lock is not a trigger
+
+            // Installing can fail while the session is still switching. Say so,
+            // and let the next tick try again.
+            if (_hook == IntPtr.Zero) { _rearmWanted = true; Raise(); }
         }
 
         [StructLayout(LayoutKind.Sequential)]
@@ -176,10 +257,7 @@ namespace Keycap
             bool stale = unchecked(Environment.TickCount - _rearmed) > 30000;
             if (!silent && !stale) return;
 
-            UnhookWindowsHookEx(_hook);
-            _hook = SetWindowsHookEx(WH_KEYBOARD_LL, _proc, GetModuleHandle(null), 0);
-            _rearmed = Environment.TickCount;
-            _lastEvent = Environment.TickCount;
+            Rearm();
         }
 
         /// <summary>Let go of everything and stop remapping.</summary>
@@ -203,6 +281,9 @@ namespace Keycap
         public static void Stop()
         {
             if (_hook == IntPtr.Zero) return;
+            Unwire();
+            _rearmWanted = false;
+            if (_watchdog != null) _watchdog.Stop();
             UnhookWindowsHookEx(_hook);
             _hook = IntPtr.Zero;
             // Never leave a modifier stuck down.
