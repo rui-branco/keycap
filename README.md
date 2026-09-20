@@ -49,9 +49,10 @@ Download `keycap.exe` from [Releases](../../releases) and run it, or build from
 source with `.\build.ps1`.
 
 It lives in the tray — closing the window keeps the remaps running. **Settings**
-has a switch for starting with Windows, and updates: Keycap looks for a newer
-build on startup, and installs one on a click — it downloads, hands over to a
-small script, and restarts itself on the new version.
+has a switch for starting with Windows, which launches it at login straight into
+the tray without opening the window, and updates: Keycap looks for a newer build
+on startup, and installs one on a click — it downloads, hands over to a small
+script, and restarts itself on the new version.
 
 If the keyboard ever feels stuck, press **both Shift keys together**: that
 releases every modifier and turns remapping off.

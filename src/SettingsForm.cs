@@ -56,7 +56,8 @@ namespace Keycap
                 });
 
             Row("Start with Windows",
-                "Keycap runs from your Startup folder, so the remaps are live from login.",
+                "Keycap runs from your Startup folder, so the remaps are live from login - "
+                + "it starts in the tray, without opening the window.",
                 StartupEnabled(),
                 delegate (bool on) { SetStartup(on); });
 
@@ -275,12 +276,35 @@ namespace Keycap
                 Type st = sc.GetType();
                 st.InvokeMember("TargetPath", System.Reflection.BindingFlags.SetProperty,
                     null, sc, new object[] { exe });
+                st.InvokeMember("Arguments", System.Reflection.BindingFlags.SetProperty,
+                    null, sc, new object[] { Program.BackgroundArg });
                 st.InvokeMember("WorkingDirectory", System.Reflection.BindingFlags.SetProperty,
                     null, sc, new object[] { System.IO.Path.GetDirectoryName(exe) });
                 st.InvokeMember("IconLocation", System.Reflection.BindingFlags.SetProperty,
                     null, sc, new object[] { exe + ",0" });
                 st.InvokeMember("Save", System.Reflection.BindingFlags.InvokeMethod,
                     null, sc, new object[] { });
+            }
+            catch { }
+        }
+
+        /// <summary>Shortcuts written by older builds carry no flag, so without
+        /// this they would still pop the window open at login.</summary>
+        public static void EnsureStartupArgs()
+        {
+            try
+            {
+                string link = StartupLink();
+                if (!System.IO.File.Exists(link)) return;
+                Type t = Type.GetTypeFromProgID("WScript.Shell");
+                object shell = Activator.CreateInstance(t);
+                object sc = t.InvokeMember("CreateShortcut",
+                    System.Reflection.BindingFlags.InvokeMethod, null, shell, new object[] { link });
+                string args = (string)sc.GetType().InvokeMember("Arguments",
+                    System.Reflection.BindingFlags.GetProperty, null, sc, new object[] { });
+                if (args == null ||
+                    args.IndexOf(Program.BackgroundArg, StringComparison.OrdinalIgnoreCase) < 0)
+                    SetStartup(true);
             }
             catch { }
         }

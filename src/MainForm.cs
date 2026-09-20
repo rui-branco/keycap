@@ -35,6 +35,7 @@ namespace Keycap
             new System.Collections.Generic.List<string[]>();   // label, value
         string _editKind = "";                                  // scan | mod
         bool _exiting;
+        bool _startHidden;
         static MainForm _instance;
 
         /// <summary>
@@ -52,8 +53,11 @@ namespace Keycap
             Application.Exit();
         }
 
-        public MainForm()
+        public MainForm() : this(false) { }
+
+        public MainForm(bool background)
         {
+            _startHidden = background;
             _instance = this;
             Text = "Keycap";
             BackColor = Theme.Back;
@@ -81,6 +85,7 @@ namespace Keycap
 
             BuildTray();
             Mapping.Load();
+            SettingsForm.EnsureStartupArgs();
             Updater.CheckAsync();
             Hook.Start();          // the app IS the remapper now
             Hook.Changed += delegate { UpdateTray(); };
@@ -156,6 +161,23 @@ namespace Keycap
             WindowState = FormWindowState.Normal;
             Activate();
             try { SetForegroundWindow(Handle); } catch { }
+        }
+
+        /// <summary>
+        /// Application.Run() shows the form; started from the Startup shortcut
+        /// that first show is suppressed, so the app boots into the tray.
+        /// </summary>
+        protected override void SetVisibleCore(bool value)
+        {
+            if (_startHidden)
+            {
+                _startHidden = false;
+                // The handle must exist anyway: the tray menu, the hook and the
+                // second-launch broadcast all need a window to talk to.
+                if (!IsHandleCreated) CreateHandle();
+                value = false;
+            }
+            base.SetVisibleCore(value);
         }
 
         /// <summary>

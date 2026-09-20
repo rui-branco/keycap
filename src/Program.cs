@@ -17,6 +17,12 @@ namespace Keycap
         /// </summary>
         public static readonly int WmShow = RegisterWindowMessage("KeycapShowWindow");
 
+        /// <summary>
+        /// Passed by the Startup shortcut, so logging in lands Keycap in the
+        /// tray rather than in the window.
+        /// </summary>
+        public const string BackgroundArg = "--background";
+
         static Mutex _only;   // held for the life of the process
 
         [STAThread]
@@ -33,11 +39,13 @@ namespace Keycap
                 return;
             }
 
+            bool background = IsBackground(args);
+
             try
             {
                 Application.EnableVisualStyles();
                 Application.SetCompatibleTextRenderingDefault(false);
-                Application.Run(new MainForm());
+                Application.Run(new MainForm(background));
             }
             catch (Exception ex)
             {
@@ -48,6 +56,20 @@ namespace Keycap
             {
                 GC.KeepAlive(_only);
             }
+        }
+
+        static bool IsBackground(string[] args)
+        {
+            foreach (string a in args)
+            {
+                if (string.Equals(a, BackgroundArg, StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(a, "-background", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(a, "/background", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(a, "--tray", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(a, "-b", StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+            return false;
         }
 
         static readonly IntPtr HWND_BROADCAST = new IntPtr(0xffff);
