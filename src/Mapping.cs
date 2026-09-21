@@ -326,7 +326,28 @@ namespace Keycap
                        .Replace("\\\\", "\\");
         }
 
+        /// <summary>
+        /// Writes the mapping file, and survives not being able to.
+        ///
+        /// Load() calls this on first run, and Load() runs inside the MainForm constructor,
+        /// which is the argument to Application.Run - so an unwritable folder used to come
+        /// out of the top-level handler as a stack trace in a message box, and Keycap never
+        /// opened at all. A mapping that cannot be saved is worth losing; the remaps that
+        /// are already loaded and running are not.
+        /// </summary>
         public static void Save()
+        {
+            try
+            {
+                Write();
+            }
+            catch (Exception ex)
+            {
+                Program.LogError(ex);
+            }
+        }
+
+        static void Write()
         {
             Directory.CreateDirectory(Dir);
             StringBuilder sb = new StringBuilder();
