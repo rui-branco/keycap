@@ -55,11 +55,27 @@ namespace Keycap
                     else Hook.Stop();
                 });
 
-            Row("Start with Windows",
+            ToggleChip startup = null;
+            startup = Row("Start with Windows",
                 "Keycap runs from your Startup folder, so the remaps are live from login - "
                 + "it starts in the tray, without opening the window.",
                 StartupEnabled(),
-                delegate (bool on) { SetStartup(on); });
+                delegate (bool on)
+                {
+                    string err = SetStartup(on);
+                    if (err == null) return;
+
+                    // Put the switch back where the Startup folder says it should be, so
+                    // it cannot sit there claiming something that did not happen.
+                    _syncing = true;
+                    try { startup.Checked = StartupEnabled(); }
+                    finally { _syncing = false; }
+
+                    MessageBox.Show(this,
+                        (on ? "Could not add Keycap to your Startup folder.\r\n\r\n"
+                            : "Could not remove Keycap from your Startup folder.\r\n\r\n") + err,
+                        "Keycap", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                });
 
             Section("UPDATES");
 
@@ -215,7 +231,11 @@ namespace Keycap
 
         delegate void Setter(bool on);
 
-        void Row(string title, string detail, bool value, Setter apply)
+        /// <summary>Set while a row is putting its own switch back, so the correction
+        /// does not read as another click and run the setter again.</summary>
+        bool _syncing;
+
+        ToggleChip Row(string title, string detail, bool value, Setter apply)
         {
             ToggleChip t = new ToggleChip();
             t.Text = "";
@@ -224,7 +244,7 @@ namespace Keycap
             t.Checked = value;
             t.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             t.SetBounds(ClientSize.Width - Pad - 44, _y + 2, 44, 24);
-            t.CheckedChanged += delegate { apply(t.Checked); };
+            t.CheckedChanged += delegate { if (!_syncing) apply(t.Checked); };
             Controls.Add(t);
 
             Label head = new Label();
@@ -248,6 +268,7 @@ namespace Keycap
             Controls.Add(sub);
 
             _y += 62;
+            return t;
         }
 
         static string StartupLink()
@@ -258,7 +279,13 @@ namespace Keycap
 
         static bool StartupEnabled() { return System.IO.File.Exists(StartupLink()); }
 
-        static void SetStartup(bool on)
+        /// <summary>
+        /// Writes or removes the Startup shortcut, and says what went wrong rather than
+        /// nothing at all. The switch paints itself the moment it is clicked, so a failure
+        /// swallowed here left it showing ON while Keycap would not in fact start with
+        /// Windows - a lie that only unwound the next time Settings was opened.
+        /// </summary>
+        static string SetStartup(bool on)
         {
             try
             {
@@ -266,7 +293,7 @@ namespace Keycap
                 if (!on)
                 {
                     if (System.IO.File.Exists(link)) System.IO.File.Delete(link);
-                    return;
+                    return null;
                 }
                 string exe = Application.ExecutablePath;
                 Type t = Type.GetTypeFromProgID("WScript.Shell");
@@ -284,8 +311,20 @@ namespace Keycap
                     null, sc, new object[] { exe + ",0" });
                 st.InvokeMember("Save", System.Reflection.BindingFlags.InvokeMethod,
                     null, sc, new object[] { });
+                return null;
             }
-            catch { }
+            catch (Exception ex)
+            {
+                // Unwrapped: everything here goes through InvokeMember, which hands back
+                // whatever the shortcut object threw wrapped in a TargetInvocationException.
+                // The outer message is always the same sentence about an invocation target,
+                // so on its own it says nothing about what actually failed.
+                Exception cause = ex;
+                while (cause.InnerException != null) cause = cause.InnerException;
+
+                Program.LogError(cause);
+                return cause.Message;
+            }
         }
 
         /// <summary>Shortcuts written by older builds carry no flag, so without

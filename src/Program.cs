@@ -82,7 +82,12 @@ namespace Keycap
         [DllImport("user32.dll")]
         static extern bool AllowSetForegroundWindow(uint pid);
 
-        static void LogError(Exception ex)
+        /// <summary>
+        /// The one error log, at %LOCALAPPDATA%\Keycap\error.log. Reachable from the rest
+        /// of the app because a failure the user was told about is still worth a record -
+        /// a message box they dismiss is the only trace otherwise.
+        /// </summary>
+        public static void LogError(Exception ex)
         {
             try
             {

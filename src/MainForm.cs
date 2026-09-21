@@ -87,8 +87,21 @@ namespace Keycap
             Mapping.Load();
             SettingsForm.EnsureStartupArgs();
             Updater.CheckAsync();
+            // Subscribed before the hook starts, not after: Start() raises Changed on
+            // its way out, and attaching one line later meant that first notification
+            // had no listener. The tooltip then read "remapping off" for the whole
+            // session while the app was in fact remapping, until something else
+            // happened to toggle it.
+            // Every way of turning remapping off ends in Hook.Raise(), so this is the one
+            // place that has to take the indicator down with it. A persistent pill - the
+            // mic-muted one - is only cleared by F5, and F5 only exists while the hook is
+            // installed, so turning remapping off used to strand it on screen for good.
+            Hook.Changed += delegate
+            {
+                UpdateTray();
+                if (!Hook.Running) Osd.Hide();
+            };
             Hook.Start();          // the app IS the remapper now
-            Hook.Changed += delegate { UpdateTray(); };
 
             DoLayoutAll();
             RefreshAll(true);
