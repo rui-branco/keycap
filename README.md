@@ -124,27 +124,6 @@ layouts Windows actually has installed, opens on the active one, and switches
 Windows when you change it. Ships with Portuguese, Spanish, German, French,
 British and US.
 
-## Build
-
-```powershell
-.\build.ps1
-```
-
-No SDK and no NuGet. It compiles with the C# compiler that ships in Windows
-(`C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe`) against .NET
-Framework 4.8, present on every Windows 10 and 11 install.
-
-That compiler is the **legacy** one — C# 5 only. No string interpolation, no
-null-conditional operators, no `nameof`. Source is **UTF-8 with BOM**: without
-the BOM it reads files as the system ANSI code page and every accented glyph
-becomes mojibake.
-
-| Script | Purpose |
-|---|---|
-| `build.ps1` | Compiles `bin\keycap.exe` |
-| `tools\make-icon.ps1` | Generates `assets\keycap.ico` from code — no binary source asset |
-| `tools\fix-encoding.py` | Repairs source double-encoded by a PowerShell round-trip |
-
 ## How it works
 
 A low-level keyboard hook (`WH_KEYBOARD_LL`) sees every key before the focused
