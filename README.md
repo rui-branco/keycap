@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/window.png" alt="Keycap showing the Magic Keyboard with every remapped key highlighted" width="722">
+  <img src="docs/window.png" alt="Keycap showing the Magic Keyboard with every remapped key highlighted" width="760">
 </p>
 
 <p align="center">
