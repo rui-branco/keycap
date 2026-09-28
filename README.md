@@ -33,8 +33,8 @@ every key actually does, and lets you change any of it by clicking a key.
 ## Features
 
 - **Command → Ctrl** — `⌘C`, `⌘V`, `⌘A`, `⌘Z` behave as they do on macOS
-- **Option → Windows key**, where it physically sits, keeping `⌥←/→` word-jump and `⌥⌫` delete-word
-- **Option+Tab** is the app switcher; **Option** alone opens Start
+- **Option → Alt**, where it physically sits, keeping `⌥←/→` word-jump, `⌥⇧←/→` word select and `⌥⌫` delete-word
+- **Option+Tab** is the app switcher; right **Command** stays the Windows key
 - **Scancode fixes** for the keys Apple reports differently, applied per keyboard layout
 - **The function row does what is printed on it** — brightness, Mission Control, Search, microphone mute, media, volume
 - **Phrases** — a key combination, or a word that expands as you type it
@@ -166,7 +166,7 @@ taken before every change Keycap makes.
 
 ```
 mod LWin LCtrl
-mod LAlt LWin
+mod LAlt LAlt
 scan 00D 01A 0816
 text 056 ± § 0816
 phrase 5 69 hello there

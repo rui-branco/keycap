@@ -322,10 +322,12 @@ namespace Keycap
                 vk == 0xA0 || vk == 0xA1 || vk == 0xA2 || vk == 0xA3 || vk == 0xA4 || vk == 0xA5)
                 return;
 
-            // Command reaches us as Ctrl and Option as Win, because the hook has
-            // already remapped them - which is exactly what the hook will match.
+            // Command reaches us as Ctrl and Option as Win or Alt, whichever it
+            // is set to act as, because the hook has already remapped them -
+            // which is exactly what the hook will match. Left Alt only: right
+            // Option is AltGr and must not count.
             bool cmd = e.Control;
-            bool opt = (GetKeyState(0x5B) & 0x8000) != 0;
+            bool opt = (GetKeyState(0x5B) & 0x8000) != 0 || (GetKeyState(0xA4) & 0x8000) != 0;
             bool held = cmd || opt || e.Alt;
 
             e.Handled = true;

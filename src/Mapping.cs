@@ -162,7 +162,7 @@ namespace Keycap
             Phrases.Clear();
             Mods.Clear();
             Mods.Add(M("LWin", "LCtrl"));    // Command -> Ctrl
-            Mods.Add(M("LAlt", "LWin"));     // Option  -> Windows key
+            Mods.Add(M("LAlt", "LAlt"));     // Option  -> Alt, keeping the Mac editing keys
 
             Scans.Clear();
             // Portuguese: Apple's board disagrees with Microsoft pt-PT on six keys.

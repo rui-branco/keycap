@@ -52,9 +52,9 @@ namespace Keycap
             content.Controls.Add(_whatCard);
 
             _whatText = Hint("Keycap makes an Apple Magic Keyboard behave on Windows: Command acts as Ctrl, "
-                           + "Option as the Windows key, the keys that type the wrong character are fixed per "
-                           + "layout, and the function row does what is printed on it. It lives in the tray - "
-                           + "closing the window keeps the remaps running.", Theme.Card);
+                           + "Option as Alt, the keys that type the wrong character are fixed per layout, and "
+                           + "the function row does what is printed on it. It lives in the tray - closing the "
+                           + "window keeps the remaps running.", Theme.Card);
             _whatCard.Controls.Add(_whatText);
 
             _stuckHead = Section("If the keyboard feels stuck", Theme.Back);

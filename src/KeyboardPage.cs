@@ -333,7 +333,12 @@ namespace Keycap
                 act = mod.Act;
                 steps.Add("reports as " + mod.Src);
                 steps.Add(mod.Act);
-                if (why.Length == 0)
+                // Option as Alt is not a remap: Alt passes through, and the
+                // Mac editing keys are layered on top of it.
+                if (why.Length == 0 && mod.Src == "LAlt" && mod.Dst == "LAlt")
+                    why = "Physical " + mod.Label + " reports as " + mod.Src
+                        + " and stays Alt; Keycap adds Option's word-by-word keys on top.";
+                else if (why.Length == 0)
                     why = "Physical " + mod.Label + " reports as " + mod.Src
                         + ", which Keycap remaps to " + mod.Dst + ".";
             }

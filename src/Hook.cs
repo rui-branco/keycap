@@ -104,6 +104,7 @@ namespace Keycap
         const int VK_MEDIA_NEXT = 0xB0, VK_MEDIA_PREV = 0xB1;
         const int VK_MEDIA_PLAY = 0xB3;
         const int VK_VOLUME_MUTE = 0xAD, VK_VOLUME_DOWN = 0xAE, VK_VOLUME_UP = 0xAF;
+        const int VK_MASK = 0xE8;             // unassigned - see Bare
 
         // ---- state ----------------------------------------------------------
         static IntPtr _hook = IntPtr.Zero;
@@ -112,6 +113,7 @@ namespace Keycap
         static bool _optDown;           // physical Option   (reports as LAlt)
         static bool _altTabbing;        // Option+Tab switcher is open
         static bool _winHeld;           // we are holding Win on Option's behalf
+        static bool _altHeld;           // we are holding Alt on Option's behalf
         static bool _optUsed;           // a key was pressed while Option was held
 
         public static bool Running { get { return _hook != IntPtr.Zero; } }
@@ -244,7 +246,7 @@ namespace Keycap
         static void CheckAlive()
         {
             if (_hook == IntPtr.Zero) return;
-            if (_cmdDown || _optDown || _winHeld || _altTabbing) return;  // mid-chord
+            if (_cmdDown || _optDown || _winHeld || _altHeld || _altTabbing) return;  // mid-chord
             if (unchecked(Environment.TickCount - _rearmed) < 3000) return;
 
             LASTINPUTINFO li = new LASTINPUTINFO();
@@ -273,6 +275,7 @@ namespace Keycap
         {
             if (_altTabbing) { Key(VK_LMENU, false); _altTabbing = false; }
             if (_winHeld) { Key(VK_LWIN, false); _winHeld = false; }
+            if (_altHeld) { Key(VK_LMENU, false); _altHeld = false; }
             if (_cmdDown) { Key(VK_LCONTROL, false); _cmdDown = false; }
             _optDown = false;
             _optUsed = false;
@@ -290,6 +293,7 @@ namespace Keycap
             if (_cmdDown) { Key(VK_LCONTROL, false); _cmdDown = false; }
             if (_altTabbing) { Key(VK_LMENU, false); _altTabbing = false; }
             if (_winHeld) { Key(VK_LWIN, false); _winHeld = false; }
+            if (_altHeld) { Key(VK_LMENU, false); _altHeld = false; }
             _optDown = false;
             Raise();
         }
@@ -391,7 +395,7 @@ namespace Keycap
         /// <summary>
         /// Run an action with our injected modifiers lifted, then restore them.
         /// Without this, Command+Left would arrive as Ctrl+Home because Command
-        /// is holding Ctrl down on the OS side.
+        /// is holding Ctrl down on the OS side. Alt held for Option stays up.
         ///
         /// The work is handed to a worker thread rather than done here. A
         /// low-level hook callback has a few hundred milliseconds to return -
@@ -401,9 +405,17 @@ namespace Keycap
         /// </summary>
         static void Bare(Action act)
         {
-            bool cmd = _cmdDown, win = _winHeld;   // read on the hook thread
+            bool cmd = _cmdDown, win = _winHeld, alt = _altHeld;   // read on the hook thread
+            // Alt is not put back afterwards: pressed again with nothing after
+            // it, letting go of Option would open the menu bar. The next key
+            // that needs Alt presses it again.
+            _altHeld = false;
             Post(delegate
             {
+                // A key between Alt going down and up keeps its release from
+                // opening the menu bar. 0xE8 is unassigned, so nothing reacts
+                // to it - the same mask AutoHotkey uses.
+                if (alt) { Tap(VK_MASK); Key(VK_LMENU, false); }
                 if (cmd) Key(VK_LCONTROL, false);
                 if (win) Key(VK_LWIN, false);
                 act();
@@ -484,6 +496,9 @@ namespace Keycap
             return m == null ? fallback : m.Dst;
         }
 
+        /// <summary>Left Option is set to act as Alt rather than Windows.</summary>
+        static bool OptAsAlt { get { return DstFor("LAlt", "LAlt") == "LAlt"; } }
+
         static int VkOf(string name)
         {
             switch (name)
@@ -546,7 +561,7 @@ namespace Keycap
         /// </summary>
         static void Reconcile()
         {
-            if (!_cmdDown && !_optDown && !_winHeld && !_altTabbing) return;
+            if (!_cmdDown && !_optDown && !_winHeld && !_altHeld && !_altTabbing) return;
             if (unchecked(Environment.TickCount - _lastEvent) < 4000) return;
             ReleaseAll();
         }
@@ -558,7 +573,7 @@ namespace Keycap
             int vk = (int)k.vkCode;
             int sc = (int)k.scanCode;
 
-            // ---- modifiers: Command -> Ctrl, Option -> Windows -------------
+            // ---- modifiers: Command -> Ctrl, Option -> Alt -----------------
             if (vk == VK_LWIN)
             {
                 string dst = DstFor("LWin", "LCtrl");
@@ -571,8 +586,27 @@ namespace Keycap
             }
             if (vk == VK_LMENU)
             {
-                string optDst = DstFor("LAlt", "LWin");
-                if (optDst == "LAlt") return false;       // left as Alt
+                string optDst = DstFor("LAlt", "LAlt");
+                if (optDst == "LAlt")
+                {
+                    // Option as Alt. Alt goes down with Option, so Alt+click and
+                    // Alt+letter behave as on any Windows keyboard; the Mac
+                    // editing combos below lift it out of the way (see Bare).
+                    if (down)
+                    {
+                        if (_optDown) return true;          // auto-repeat
+                        _optDown = true;
+                        _optUsed = false;
+                        Key(VK_LMENU, true);
+                        _altHeld = true;
+                    }
+                    else
+                    {
+                        _optDown = false;
+                        if (_altHeld) { Key(VK_LMENU, false); _altHeld = false; }
+                    }
+                    return true;
+                }
                 if (optDst != "LWin")
                 {
                     int t = VkOf(optDst);
@@ -685,11 +719,12 @@ namespace Keycap
             if (_optDown)
             {
                 _optUsed = true;
+                bool asAlt = OptAsAlt;
                 // Option+Tab is the app switcher. Alt has to stay held while
                 // Tab is tapped, or the list closes after one step - so swap
                 // the Windows key we are holding for Alt and keep it down
                 // until Option is released.
-                if (vk == VK_TAB)
+                if (vk == VK_TAB && !asAlt)
                 {
                     if (!_altTabbing)
                     {
@@ -714,8 +749,13 @@ namespace Keycap
                     return true;
                 }
 
-                // Everything else is a Windows shortcut: Option+E, Option+L...
-                if (!_winHeld) { Key(VK_LWIN, true); _winHeld = true; }
+                // Everything else is an Alt shortcut - Alt+Tab included - or,
+                // with Option as Windows, a Windows one: Option+E, Option+L...
+                if (asAlt)
+                {
+                    if (!_altHeld) { Key(VK_LMENU, true); _altHeld = true; }
+                }
+                else if (!_winHeld) { Key(VK_LWIN, true); _winHeld = true; }
                 return false;
             }
 
