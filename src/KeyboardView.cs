@@ -88,7 +88,7 @@ namespace Keycap
                 if (c.Mod != null && Mapping.FindMod(c.Mod) != null) { c.Kind = KeyKind.Mod; continue; }
                 if (c.Sc != null && Mapping.FindScan(c.Sc) != null)
                 { c.Kind = KeyKind.Layout; continue; }
-                if (c.FKey != null) { c.Kind = KeyKind.Media; continue; }
+                if (c.FKey != null && Shortcuts.MediaFor(c.FKey) != null) { c.Kind = KeyKind.Media; continue; }
                 c.Kind = KeyKind.Plain;
             }
             Invalidate();

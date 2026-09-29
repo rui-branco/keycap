@@ -346,7 +346,11 @@ namespace Keycap
             {
                 act = med;
                 steps.Add(med);
-                if (why.Length == 0)
+                if (why.Length == 0 && (c.FKey == "F1" || c.FKey == "F2"))
+                    why = "Windows has no brightness key for an external monitor, so Keycap sets it "
+                        + "on the monitor itself over DDC/CI - see Settings. Hold Option for the real "
+                        + c.FKey + ".";
+                else if (why.Length == 0)
                     why = "Windows cannot read Apple's Fn layer, so the F-row drives media "
                         + "directly, matching the icons printed on the keys. Hold Option for the real "
                         + c.FKey + ".";

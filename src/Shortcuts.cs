@@ -20,11 +20,13 @@ namespace Keycap
             new string[] { "Opt+Left / Right",      "jump word by word" },
             new string[] { "Opt+Shift+arrows",      "select word by word" },
             new string[] { "Opt+Delete",            "delete previous word" },
-            new string[] { "Opt+F3 - F12",          "the real function keys" },
+            new string[] { "Opt+F1 - F12",          "the real function keys" },
             new string[] { "right Cmd + .",         "emoji panel" },
         };
 
         public static readonly List<string[]> FRow = new List<string[]> {
+            new string[] { "F1",  "brightness down" },
+            new string[] { "F2",  "brightness up" },
             new string[] { "F3",  "Task View" },
             new string[] { "F5",  "microphone mute" },
             new string[] { "F7",  "previous track" },
@@ -37,6 +39,8 @@ namespace Keycap
 
         public static string MediaFor(string fkey)
         {
+            // Switched off in Settings, F1 and F2 are plain function keys again.
+            if (!Mapping.BrightnessKeys && (fkey == "F1" || fkey == "F2")) return null;
             foreach (string[] r in FRow) if (r[0] == fkey) return r[1];
             return null;
         }

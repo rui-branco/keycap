@@ -21,7 +21,7 @@ namespace Keycap
         public float Units = 1f;
         public string Scan;         // scancode Windows receives here, when mapped
         public string Mod;          // AHK modifier reported from this position
-        public string FKey;         // F7..F12 for the media row
+        public string FKey;         // F1, F2 and F7..F12 - the keys the hook drives
         public Glyph Icon = Glyph.None;
         public bool Half;           // half-height (arrow cluster)
         public bool Tall;           // spans this row and the next (ISO enter)
@@ -139,7 +139,7 @@ namespace Keycap
             {
                 PosKey k = P("FK" + (i + 1).ToString("00"), 1.125f);
                 k.Icon = icons[i];
-                if (i >= 6) k.FKey = "F" + (i + 1);
+                if (i < 2 || i >= 6) k.FKey = "F" + (i + 1);
                 rows_addFKeyMeta(k);
                 e0.Add(k);
             }

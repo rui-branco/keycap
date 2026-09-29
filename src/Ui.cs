@@ -270,6 +270,22 @@ namespace Keycap
             _rows.Add(r);
         }
 
+        /// <summary>
+        /// Take every row away, disposing the controls that went with them -
+        /// for rows that come and go, like the connected displays.
+        /// </summary>
+        public void Clear()
+        {
+            foreach (Row r in _rows)
+                if (r.Action != null)
+                {
+                    Controls.Remove(r.Action);
+                    r.Action.Dispose();
+                }
+            _rows.Clear();
+            Invalidate();
+        }
+
         /// <summary>Change a row's text after the fact - a status that moves on.</summary>
         public void SetText(int row, string title, string detail)
         {

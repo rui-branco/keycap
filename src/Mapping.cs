@@ -90,6 +90,61 @@ namespace Keycap
         /// <summary>Whether the on-screen indicator is shown at all.</summary>
         public static bool ShowIndicator = true;
 
+        /// <summary>F1 and F2 drive display brightness, rather than being plain F1 and F2.</summary>
+        public static bool BrightnessKeys = true;
+
+        /// <summary>How far one press of F1 or F2 moves the brightness, in percent.</summary>
+        public static int BrightnessStep = 10;
+
+        /// <summary>F1 and F2 move every display together, rather than the one under the mouse.</summary>
+        public static bool BrightnessAll = false;
+
+        /// <summary>Dim, in software, a display that does not answer DDC/CI.</summary>
+        public static bool SoftDim = true;
+
+        // Software brightness by monitor interface path, only below 100. The
+        // brightness worker reads it while the UI thread writes it, so it is
+        // only touched under _dimLock.
+        static readonly Dictionary<string, int> _dims =
+            new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        static readonly object _dimLock = new object();
+        static System.Windows.Forms.Timer _dimSave;
+
+        /// <summary>The software brightness saved for a monitor - 100 when there is none.</summary>
+        public static int DimFor(string path)
+        {
+            if (path == null) return 100;
+            lock (_dimLock)
+            {
+                int v;
+                return _dims.TryGetValue(path, out v) ? v : 100;
+            }
+        }
+
+        /// <summary>
+        /// Remember a monitor's software brightness. UI thread. The file is
+        /// written a moment after the last change rather than on every one: a
+        /// held key sets a new level many times a second, and each save would
+        /// rewrite mapping.txt.
+        /// </summary>
+        public static void SetDim(string path, int percent)
+        {
+            if (path == null) return;
+            lock (_dimLock)
+            {
+                if (percent >= 100) _dims.Remove(path);
+                else _dims[path] = Math.Max(0, percent);
+            }
+            if (_dimSave == null)
+            {
+                _dimSave = new System.Windows.Forms.Timer();
+                _dimSave.Interval = 1500;
+                _dimSave.Tick += delegate { _dimSave.Stop(); Save(); };
+            }
+            _dimSave.Stop();
+            _dimSave.Start();
+        }
+
         /// <summary>Langid whose rules the UI is currently showing.</summary>
         public static int ViewLang = 0;
 
@@ -356,7 +411,16 @@ namespace Keycap
             sb.AppendLine("#                       text <from> <plain> <shifted> <langid>");
             sb.AppendLine("#                       phrase <mods> <vk> <text>");
             sb.AppendLine("#                       word <trigger> <text>");
+            sb.AppendLine("#                       brightness <0|1>, brightness-step <percent>, brightness-all <0|1>");
+            sb.AppendLine("#                       softdim <0|1>, dim <monitor path> <percent>");
             sb.AppendLine("indicator " + (ShowIndicator ? "1" : "0"));
+            sb.AppendLine("brightness " + (BrightnessKeys ? "1" : "0"));
+            sb.AppendLine("brightness-step " + BrightnessStep);
+            sb.AppendLine("brightness-all " + (BrightnessAll ? "1" : "0"));
+            sb.AppendLine("softdim " + (SoftDim ? "1" : "0"));
+            lock (_dimLock)
+                foreach (KeyValuePair<string, int> d in _dims)
+                    sb.AppendLine("dim " + d.Key + " " + d.Value);
             foreach (Mod m in Mods)
                 sb.AppendLine("mod " + m.Src + " " + m.Dst);
             foreach (Rule r in Scans)
@@ -381,6 +445,7 @@ namespace Keycap
             if (!System.IO.File.Exists(File_)) { LoadDefaults(); Save(); return; }
 
             Mods.Clear(); Scans.Clear(); Phrases.Clear();
+            lock (_dimLock) _dims.Clear();
             foreach (string raw in System.IO.File.ReadAllLines(File_, new UTF8Encoding(true)))
             {
                 string line = raw.Trim();
@@ -389,6 +454,17 @@ namespace Keycap
                 try
                 {
                     if (p[0] == "indicator" && p.Length >= 2) ShowIndicator = p[1] != "0";
+                    else if (p[0] == "brightness" && p.Length >= 2) BrightnessKeys = p[1] != "0";
+                    else if (p[0] == "brightness-step" && p.Length >= 2)
+                        BrightnessStep = Math.Max(1, Math.Min(50, int.Parse(p[1])));
+                    else if (p[0] == "brightness-all" && p.Length >= 2) BrightnessAll = p[1] != "0";
+                    else if (p[0] == "softdim" && p.Length >= 2) SoftDim = p[1] != "0";
+                    else if (p[0] == "dim" && p.Length >= 3)
+                    {
+                        // The path never holds a space, so it is one field.
+                        int v = Math.Max(0, Math.Min(100, int.Parse(p[2])));
+                        lock (_dimLock) if (v < 100) _dims[p[1]] = v;
+                    }
                     else if (p[0] == "mod" && p.Length >= 3) Mods.Add(M(p[1], p[2]));
                     else if (p[0] == "scan" && p.Length >= 4)
                         Scans.Add(R(p[1], p[2], int.Parse(p[3], NumberStyles.HexNumber), ""));

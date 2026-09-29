@@ -98,7 +98,7 @@ namespace Keycap
         const int VK_LEFT = 0x25, VK_UP = 0x26, VK_RIGHT = 0x27, VK_DOWN = 0x28;
         const int VK_HOME = 0x24, VK_END = 0x23;
         const int VK_BACK = 0x08, VK_DELETE = 0x2E, VK_TAB = 0x09, VK_SPACE = 0x20;
-        const int VK_F3 = 0x72, VK_F4 = 0x73, VK_F5 = 0x74;
+        const int VK_F1 = 0x70, VK_F2 = 0x71, VK_F3 = 0x72, VK_F4 = 0x73, VK_F5 = 0x74;
         const int VK_F7 = 0x76, VK_F12 = 0x7B;
         const int VK_Q = 0x51, VK_M = 0x4D, VK_S = 0x53;
         const int VK_MEDIA_NEXT = 0xB0, VK_MEDIA_PREV = 0xB1;
@@ -742,7 +742,7 @@ namespace Keycap
                     case VK_RIGHT: Bare(delegate { TapCtrl(VK_RIGHT); }); return true;
                     case VK_BACK: Bare(delegate { TapCtrl(VK_BACK); }); return true;
                 }
-                if (vk >= VK_F3 && vk <= VK_F12)
+                if (vk >= VK_F1 && vk <= VK_F12)
                 {
                     int f = vk;
                     Bare(delegate { Tap(f); });      // the real function key
@@ -762,6 +762,11 @@ namespace Keycap
             // ---- function row ------------------------------------------------
             switch (vk)
             {
+                case VK_F1:
+                case VK_F2:
+                    if (!Mapping.BrightnessKeys) break;          // plain F1 / F2
+                    Brightness.Step(vk == VK_F2 ? 1 : -1);       // DDC/CI is slow - done on its own thread
+                    return true;
                 case VK_F3: Bare(delegate { Tap(VK_TAB, VK_LWIN); }); return true;
                 case VK_F4: Bare(delegate { Tap(VK_S, VK_LWIN); }); return true;   // the magnifier
                 case VK_F5: Audio.ToggleMic(); return true;

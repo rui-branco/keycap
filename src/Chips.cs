@@ -232,6 +232,149 @@ namespace Keycap
         }
     }
 
+    /// <summary>
+    /// A level from 0 to 100, the Windows 11 way: a thin track filled in accent
+    /// up to a round knob with an accent dot in it, and the value written out
+    /// beside it so the number is there without hovering. It reads like the
+    /// brightness slider in Quick Settings, which is what it stands in for.
+    /// </summary>
+    public class LevelSlider : Drawn
+    {
+        public event EventHandler ValueChanged;
+        int _value;
+        bool _hover, _down;
+
+        const int LabelW = 44;          // the "43%" at the right
+        const int LabelGap = 8;
+        const float KnobD = 18f;
+        const float TrackH = 4f;
+
+        public LevelSlider()
+        {
+            BackColor = Theme.Card;
+            Cursor = Cursors.Hand;
+            Font = Theme.Font(9f, FontStyle.Regular);
+            Size = new Size(220, 24);
+        }
+
+        public int Value
+        {
+            get { return _value; }
+            set
+            {
+                int v = Math.Max(0, Math.Min(100, value));
+                if (v == _value) return;
+                _value = v;
+                Invalidate();
+                if (ValueChanged != null) ValueChanged(this, EventArgs.Empty);
+            }
+        }
+
+        /// <summary>Set the value without raising ValueChanged.</summary>
+        public void SetQuiet(int value)
+        {
+            int v = Math.Max(0, Math.Min(100, value));
+            if (v == _value) return;
+            _value = v;
+            Invalidate();
+        }
+
+        /// <summary>
+        /// True while the knob is held. Whoever feeds the slider from outside
+        /// leaves it alone meanwhile, or the echo of its own changes coming back
+        /// would drag the knob away from under the pointer.
+        /// </summary>
+        public bool Dragging { get { return _down; } }
+
+        // The track stops half a knob short of each end, so the knob fits at 0 and 100.
+        float TrackLeft { get { return KnobD / 2f; } }
+        float TrackRight { get { return Math.Max(TrackLeft, Width - LabelW - LabelGap - KnobD / 2f); } }
+
+        int ValueAt(int x)
+        {
+            float span = TrackRight - TrackLeft;
+            if (span <= 0) return _value;
+            return (int)Math.Round((x - TrackLeft) * 100.0 / span);
+        }
+
+        protected override void OnMouseEnter(EventArgs e) { _hover = true; Invalidate(); base.OnMouseEnter(e); }
+        protected override void OnMouseLeave(EventArgs e) { _hover = false; Invalidate(); base.OnMouseLeave(e); }
+
+        protected override void OnMouseDown(MouseEventArgs e)
+        {
+            base.OnMouseDown(e);
+            if (e.Button != MouseButtons.Left || e.X > Width - LabelW - LabelGap) return;
+            Capture = true;
+            _down = true;
+            Value = ValueAt(e.X);       // a click jumps straight there
+            Invalidate();
+        }
+
+        protected override void OnMouseMove(MouseEventArgs e)
+        {
+            if (_down) Value = ValueAt(e.X);
+            base.OnMouseMove(e);
+        }
+
+        protected override void OnMouseUp(MouseEventArgs e)
+        {
+            if (_down)
+            {
+                _down = false;
+                Capture = false;
+                Invalidate();
+            }
+            base.OnMouseUp(e);
+        }
+
+        /// <summary>Capture taken away mid-drag - by a window popping up, say -
+        /// ends the drag, so Dragging cannot be left stuck on.</summary>
+        protected override void OnMouseCaptureChanged(EventArgs e)
+        {
+            if (_down && !Capture) { _down = false; Invalidate(); }
+            base.OnMouseCaptureChanged(e);
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            Graphics g = e.Graphics;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            g.Clear(BackColor);
+
+            TextRenderer.DrawText(g, _value + "%", Font,
+                new Rectangle(Width - LabelW, 0, LabelW, Height),
+                _hover || _down ? Theme.Text : Theme.Dim,
+                TextFormatFlags.Right | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
+
+            float left = TrackLeft, right = TrackRight, cy = Height / 2f;
+            float kx = left + (right - left) * _value / 100f;
+            Color accent = _hover ? Theme.AccentHi : Theme.Accent;
+
+            RectangleF track = new RectangleF(left, cy - TrackH / 2f, right - left, TrackH);
+            using (GraphicsPath p = Theme.Rounded(track, TrackH / 2f))
+            using (SolidBrush b = new SolidBrush(Theme.BorderHi))
+                g.FillPath(b, p);
+            if (kx > left)
+            {
+                RectangleF fill = new RectangleF(left, cy - TrackH / 2f, kx - left, TrackH);
+                using (GraphicsPath p = Theme.Rounded(fill, TrackH / 2f))
+                using (SolidBrush b = new SolidBrush(accent))
+                    g.FillPath(b, p);
+            }
+
+            // The knob: a raised disc with an accent dot that grows under the
+            // pointer and shrinks while pressed, as Windows 11 draws it.
+            RectangleF knob = new RectangleF(kx - KnobD / 2f + 0.5f, cy - KnobD / 2f + 0.5f,
+                                             KnobD - 1f, KnobD - 1f);
+            using (SolidBrush b = new SolidBrush(Theme.CardHi)) g.FillEllipse(b, knob);
+            using (Pen pen = new Pen(Theme.BorderHi, 1f)) g.DrawEllipse(pen, knob);
+
+            float dot = _down ? 7f : (_hover ? 10f : 8f);
+            using (SolidBrush b = new SolidBrush(accent))
+                g.FillEllipse(b, kx - dot / 2f, cy - dot / 2f, dot, dot);
+        }
+    }
+
     /// <summary>The colour key for the board.</summary>
     public class Legend : Drawn
     {

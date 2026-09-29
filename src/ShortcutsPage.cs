@@ -52,7 +52,8 @@ namespace Keycap
             _mods.Items.Clear();
             foreach (Mapping.Mod m in Mapping.Mods)
                 _mods.Items.Add(new string[] { m.Label, "acts as " + m.Act });
-            _mods.Items.AddRange(Shortcuts.FRow);
+            foreach (string[] r in Shortcuts.FRow)
+                if (Shortcuts.MediaFor(r[0]) != null) _mods.Items.Add(r);
 
             _scans.Items.Clear();
             foreach (Mapping.Rule r in Mapping.Scans)

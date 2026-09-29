@@ -115,6 +115,7 @@ namespace Keycap
                 OnHookChanged();
             };
             Hook.Start();          // the app IS the remapper now
+            Brightness.Start();    // on this thread, so it can hand results back to it
 
             ShowPage(_keyboard);
             LayoutShell();

@@ -10,7 +10,9 @@ namespace Keycap
 {
     /// <summary>
     /// The on-screen indicator: rounded, icon-led, just above the taskbar on
-    /// whichever monitor has the active window.
+    /// the monitor it is given - else whichever monitor has the active window.
+    /// It shows either a message or a level - a bar and a percentage, as
+    /// Windows shows volume and brightness.
     ///
     /// It is a *layered* window drawn from a 32-bit ARGB bitmap, not a normal
     /// window with a clipped region. A region is hard-edged - it can only
@@ -30,12 +32,15 @@ namespace Keycap
     /// </summary>
     public static class Osd
     {
-        public enum Sym { None, Mic, MicOff }
+        public enum Sym { None, Mic, MicOff, Sun }
 
         // Metrics in 96-DPI units; multiplied by the monitor scale to draw.
-        const float Radius = 17f;
+        // Half the height: the ends are full semicircles, a capsule like the
+        // system's own indicators. Theme.Rounded clamps the diameter to the
+        // rect's height, so it stays a true semicircle on Edge()'s one pixel
+        // shorter rect.
+        const float Radius = BaseH / 2f;
         const float PadLeft = 22f;      // pill edge to icon box
-        const float IconHalf = 13f;     // icon box centre from PadLeft
         const float IconAdvance = 40f;  // icon box to text
         const float PadRight = 20f;
         const float IconPx = 19f;
@@ -45,6 +50,9 @@ namespace Keycap
         const int BottomGap = 16;
         const int RiseY = 8;            // how far it rises while fading in
         const float CrossDy = 7f;       // how far the two layers pass each other
+        const float BarW = 150f;        // a level's bar
+        const float BarH = 4f;
+        const float BarGap = 14f;       // bar to percentage
 
         [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
         [DllImport("user32.dll")] static extern IntPtr GetDC(IntPtr hWnd);
@@ -81,6 +89,8 @@ namespace Keycap
         const int MONITOR_DEFAULTTONEAREST = 2;
 
         [DllImport("user32.dll")] static extern IntPtr MonitorFromWindow(IntPtr hwnd, int flags);
+        [DllImport("user32.dll")]
+        static extern bool SetWindowPos(IntPtr hwnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
         [DllImport("user32.dll")] static extern bool GetMonitorInfo(IntPtr mon, ref MONITORINFO mi);
         [DllImport("user32.dll")] static extern IntPtr SetThreadDpiAwarenessContext(IntPtr ctx);
         [DllImport("shcore.dll")] static extern int GetDpiForMonitor(IntPtr mon, int type, out uint dx, out uint dy);
@@ -96,16 +106,16 @@ namespace Keycap
         /// created and updated inside one of these, so Windows hands us real
         /// device pixels and stops scaling the result behind our back. Pre-1607
         /// builds have no such export; there we simply stay unaware, which is
-        /// what the whole app did before.
+        /// what the whole app did before. Dimmer borrows it too, for its veils.
         /// </summary>
-        static IntPtr EnterDpi()
+        internal static IntPtr EnterDpi()
         {
             if (!_dpiApi) return IntPtr.Zero;
             try { return SetThreadDpiAwarenessContext(PerMonitorV2); }
             catch { _dpiApi = false; return IntPtr.Zero; }
         }
 
-        static void LeaveDpi(IntPtr prev)
+        internal static void LeaveDpi(IntPtr prev)
         {
             if (prev == IntPtr.Zero) return;
             try { SetThreadDpiAwarenessContext(prev); }
@@ -236,6 +246,19 @@ namespace Keycap
         static float _w, _targetW;    // animated width
         static int _h = BaseH;
         static float _scale = 1f;     // device pixels per layout unit
+        static IntPtr _shownOn;       // the monitor the pill is on
+
+        // A level rather than a message: the value it is going to, and where
+        // the bar has got to on its way there.
+        static bool _isLevel;
+        static int _level;
+        static float _shownLevel;
+
+        // The persistent message - "Microphone muted" - that a Flash passes
+        // over and comes back to. Null when there is none.
+        static string _stickyMsg;
+        static Sym _stickyGlyph;
+        static Color _stickyAccent;
 
         // The two content layers and how far the cross-fade between them has
         // got. Switching used to dim the whole pill and bring it back, which
@@ -248,8 +271,11 @@ namespace Keycap
         /// Draw the pill. With <paramref name="backdrop"/> false only the icon
         /// and the text are drawn, on transparency - that layer is what one
         /// message cross-fades into another, leaving the pill itself steady.
+        /// With <paramref name="bar"/> at zero or above it draws a level instead
+        /// of the message.
         /// </summary>
-        static Bitmap Render(string message, Sym glyph, Color accent, int w, int h, bool backdrop, float s)
+        static Bitmap Render(string message, Sym glyph, Color accent, int w, int h, bool backdrop, float s,
+                             float bar, int value)
         {
             Bitmap bmp = new Bitmap(w, h, PixelFormat.Format32bppArgb);
             bmp.SetResolution(96f, 96f);
@@ -264,25 +290,44 @@ namespace Keycap
 
                 if (backdrop)
                 {
-                    float line = s;     // hairline border, one device pixel
-                    RectangleF r = new RectangleF(line / 2f, line / 2f,
-                                                  w - line * 1.5f, h - line * 1.5f);
-                    using (GraphicsPath path = Theme.Rounded(r, Radius * s))
+                    // The same pixel grid Compose clips with, where pixel n runs
+                    // from n to n + 1 - so Edge() is the centre of the outermost
+                    // pixel on all four sides, and the border lands in it whole.
+                    g.PixelOffsetMode = PixelOffsetMode.Half;
+                    using (GraphicsPath path = Theme.Rounded(Edge(w, h), Radius * s))
                     {
                         // Solid rather than the old 96% - subpixel text needs
                         // an opaque surface underneath to blend against, and
                         // four percent of the wallpaper was never the point.
                         using (SolidBrush b = new SolidBrush(Color.FromArgb(255, Theme.Card)))
                             g.FillPath(b, path);
-                        using (Pen p = new Pen(Color.FromArgb(150, Theme.Border), line))
+                        // A hairline, one device pixel at every scale, as Windows
+                        // 11 draws its flyouts. Opaque and a step lighter than
+                        // the fill: it is what separates the pill from a dark
+                        // window behind it.
+                        using (Pen p = new Pen(Theme.Hover, 1f))
                             g.DrawPath(p, path);
                     }
                     return bmp;
                 }
 
-                Content(g, message, glyph, accent, w, h, s, false);
+                Content(g, message, glyph, accent, w, h, s, false, bar, value);
             }
             return bmp;
+        }
+
+        /// <summary>
+        /// The pill's outline: the centre line of a one-device-pixel stroke
+        /// whose outer edge is exactly the bitmap's edge on all four sides.
+        /// Theme.Rounded draws precisely the rectangle it is given, and the old
+        /// one stopped half a pixel short on the right and bottom - those edges
+        /// came out soft and borderless while the left and top were crisp. The
+        /// fill, the border and the clip all come from here, so they cannot
+        /// disagree again about where the pill ends.
+        /// </summary>
+        static RectangleF Edge(int w, int h)
+        {
+            return new RectangleF(0.5f, 0.5f, w - 1f, h - 1f);
         }
 
         /// <summary>
@@ -291,9 +336,13 @@ namespace Keycap
         /// then antialiased once, against the pill. Going by way of a
         /// transparent layer blends those same edges a second time, which
         /// is what left the label looking soft when nothing was moving.
+        ///
+        /// With <paramref name="bar"/> at zero or above, the icon is followed
+        /// by a level instead of the message: a bar filled to that point, and
+        /// <paramref name="value"/> as a percentage after it.
         /// </summary>
         static void Content(Graphics g, string message, Sym glyph, Color accent,
-                            int w, int h, float s, bool crisp)
+                            int w, int h, float s, bool crisp, float bar, int value)
         {
             g.SmoothingMode = SmoothingMode.AntiAlias;
             g.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
@@ -301,18 +350,72 @@ namespace Keycap
             float x = PadLeft * s;
             if (glyph != Sym.None)
             {
-                string ch = glyph == Sym.MicOff ? "" : "";
+                string ch = glyph == Sym.MicOff ? "\uF781" : glyph == Sym.Sun ? "\uE706" : "\uE720";
                 Font icon = IconFont(IconPx * s);
                 if (icon != null)
                     using (icon)
                     using (SolidBrush b = new SolidBrush(accent))
-                    using (StringFormat fmt = new StringFormat())
+                    using (StringFormat fmt = StringFormat.GenericTypographic)   // a new instance each time
+                    using (GraphicsPath gp = new GraphicsPath())
                     {
-                        fmt.Alignment = StringAlignment.Center;
-                        fmt.LineAlignment = StringAlignment.Center;
-                        g.DrawString(ch, icon, b, x + IconHalf * s, h / 2f, fmt);
+                        // Centred on the glyph's own ink rather than the font's
+                        // line box, which sits the MDL2 glyphs a couple of pixels
+                        // high; and placed at the centre of the left round end -
+                        // h/2 on both axes, since Edge() is half a pixel in and
+                        // one pixel short - so the icon is concentric with the
+                        // capsule's curve.
+                        gp.AddString(ch, icon.FontFamily, (int)icon.Style, icon.Size, PointF.Empty, fmt);
+                        RectangleF ink = gp.GetBounds();
+                        if (ink.Width > 0 && ink.Height > 0)
+                        {
+                            float c = h / 2f;
+                            using (Matrix m = new Matrix())
+                            {
+                                m.Translate(c - (ink.X + ink.Width / 2f), c - (ink.Y + ink.Height / 2f));
+                                gp.Transform(m);
+                            }
+                            g.FillPath(b, gp);
+                        }
                     }
                 x += IconAdvance * s;
+            }
+
+            if (bar >= 0f)
+            {
+                float bw = BarW * s, bh = BarH * s;
+                RectangleF track = new RectangleF(x, h / 2f - bh / 2f, bw, bh);
+                using (GraphicsPath p = Theme.Rounded(track, bh / 2f))
+                using (SolidBrush b = new SolidBrush(Theme.BorderHi))
+                    g.FillPath(b, p);
+                float filled = bw * Math.Min(100f, bar) / 100f;
+                if (filled > 0.5f)
+                    using (GraphicsPath p = Theme.Rounded(
+                               new RectangleF(track.X, track.Y, filled, bh), bh / 2f))
+                    using (SolidBrush b = new SolidBrush(Theme.Accent))
+                        g.FillPath(b, p);
+
+                // The number is right-aligned in its box, so the bar holds
+                // still however many digits it has.
+                float nx = x + bw + BarGap * s;
+                string number = value + "%";
+                using (Font f = Theme.Font(TextPt * s, FontStyle.Regular))
+                {
+                    if (crisp)
+                        TextRenderer.DrawText(g, number, f,
+                            new Rectangle((int)Math.Round(nx), 0,
+                                          (int)Math.Round(w - nx - PadRight * s), h),
+                            Theme.Text, NumberFlags);
+                    else using (SolidBrush b = new SolidBrush(Theme.Text))
+                    using (StringFormat fmt = new StringFormat())
+                    {
+                        fmt.Alignment = StringAlignment.Far;
+                        fmt.LineAlignment = StringAlignment.Center;
+                        fmt.FormatFlags |= StringFormatFlags.NoWrap;
+                        g.DrawString(number, f, b,
+                            new RectangleF(nx, 0, w - nx - PadRight * s, h), fmt);
+                    }
+                }
+                return;
             }
 
             using (Font f = Theme.Font(TextPt * s, FontStyle.Regular))
@@ -341,6 +444,11 @@ namespace Keycap
 
         const TextFormatFlags TextFlags =
             TextFormatFlags.Left | TextFormatFlags.VerticalCenter |
+            TextFormatFlags.NoPrefix | TextFormatFlags.NoPadding |
+            TextFormatFlags.SingleLine;
+
+        const TextFormatFlags NumberFlags =
+            TextFormatFlags.Right | TextFormatFlags.VerticalCenter |
             TextFormatFlags.NoPrefix | TextFormatFlags.NoPadding |
             TextFormatFlags.SingleLine;
 
@@ -392,29 +500,107 @@ namespace Keycap
         {
             if (!Mapping.ShowIndicator) return;
 
+            // A persistent message is remembered so a Flash can return to it;
+            // any other message replaces it for good.
+            if (persist)
+            {
+                _stickyMsg = message;
+                _stickyGlyph = glyph;
+                _stickyAccent = accent;
+            }
+            else _stickyMsg = null;
+
             IntPtr ctx = EnterDpi();
-            try { ShowCore(message, glyph, accent, persist); }
+            try { ShowCore(message, glyph, accent, persist, -1, IntPtr.Zero); }
             finally { LeaveDpi(ctx); }
         }
 
-        static void ShowCore(string message, Sym glyph, Color accent, bool persist)
+        /// <summary>
+        /// A passing message that leaves a persistent one standing. It shows for
+        /// the usual moment and then, instead of fading out, the pill goes back
+        /// to the persistent message it passed over - a brightness step must not
+        /// be what quietly hides that the microphone is still muted. With no
+        /// persistent message it behaves exactly like Show. It goes on
+        /// <paramref name="monitor"/>, or with IntPtr.Zero on the active
+        /// window's monitor, as Show does.
+        /// </summary>
+        public static void Flash(string message, Sym glyph, Color accent, IntPtr monitor)
         {
+            if (!Mapping.ShowIndicator) return;
+
+            IntPtr ctx = EnterDpi();
+            try { ShowCore(message, glyph, accent, false, -1, monitor); }
+            finally { LeaveDpi(ctx); }
+        }
+
+        /// <summary>
+        /// A level rather than a sentence, the way Windows shows volume and
+        /// brightness: the icon, a bar and the percentage. A new value while one
+        /// is showing moves the bar instead of replacing the pill, so a held key
+        /// reads as one control sliding rather than a run of messages each
+        /// cross-fading into the next. Like Flash, it passes over a persistent
+        /// message and goes back to it, and it goes on <paramref name="monitor"/>
+        /// - IntPtr.Zero for the active window's.
+        /// </summary>
+        public static void Level(Sym glyph, int percent, Color accent, IntPtr monitor)
+        {
+            if (!Mapping.ShowIndicator) return;
+
+            IntPtr ctx = EnterDpi();
+            try { ShowCore(null, glyph, accent, false, Math.Max(0, Math.Min(100, percent)), monitor); }
+            finally { LeaveDpi(ctx); }
+        }
+
+        /// <summary>
+        /// Put a message - or, with <paramref name="level"/> at zero or above, a
+        /// level - on the pill, on <paramref name="monitor"/> or, given
+        /// IntPtr.Zero, on the active window's. -1 is a message.
+        /// </summary>
+        static void ShowCore(string message, Sym glyph, Color accent, bool persist, int level, IntPtr monitor)
+        {
+            // A pill that has to move to another display leaves and arrives
+            // fresh there - fading and rising in - rather than jumping across
+            // in the middle of an animation.
+            IntPtr where = monitor != IntPtr.Zero ? monitor : ActiveMonitor();
+            if (_form != null && where != _shownOn) HideCore();
+            _shownOn = where;
+
             bool fresh = _form == null;
 
-            // Pick up the density of whichever monitor the active window is on,
-            // so moving between a laptop panel and an external screen redraws at
-            // that screen's own resolution rather than being stretched to it.
-            float scale = ScaleFor(ActiveMonitor());
+            // Pick up the density of the monitor the pill is on, so moving
+            // between a laptop panel and an external screen redraws at that
+            // screen's own resolution rather than being stretched to it. It is
+            // the monitor it was put on, not wherever focus is now, so the pill
+            // does not wander to another screen mid-animation when focus moves.
+            float scale = ScaleFor(_shownOn);
             bool rescaled = Math.Abs(scale - _scale) > 0.001f;
             _scale = scale;
             _h = (int)Math.Round(BaseH * _scale);
 
-            bool changed = fresh || rescaled || message != _msg || glyph != _glyph;
+            // One level following another only moves the bar. Treating it as a
+            // new message - the cross-fade and the width change - is what made
+            // a held key glitch: each step started a fade before the last had
+            // finished, and the label jumped. The level's layer is still
+            // refreshed, so a later hand-over - back to the persistent message,
+            // or a fade still in progress - never shows a stale value.
+            bool asLevel = level >= 0;
+            bool sameLevel = !fresh && !rescaled && asLevel && _isLevel && glyph == _glyph;
+            bool changed = !sameLevel && (fresh || rescaled || asLevel != _isLevel || glyph != _glyph
+                                          || (!asLevel && message != _msg));
 
-            _msg = message;
+            _isLevel = asLevel;
+            _msg = asLevel ? "" : message;
             _glyph = glyph;
             _accent = accent;
-            _targetW = Measure(message, glyph, _scale);
+            if (asLevel)
+            {
+                // A pill that is just appearing, or turning from a sentence
+                // into a level, starts with the bar already there; only one
+                // level following another slides.
+                if (!sameLevel) _shownLevel = level;
+                _level = level;
+            }
+            _targetW = asLevel ? MeasureLevel(_scale) : Measure(message, glyph, _scale);
 
             if (changed)
             {
@@ -429,8 +615,16 @@ namespace Keycap
                     _incoming = null;
                 }
                 _outgoing = fresh || rescaled ? null : _incoming;
-                _incoming = Render(message, glyph, accent, (int)_targetW, _h, false, _scale);
+                _incoming = Render(message, glyph, accent, (int)_targetW, _h, false, _scale,
+                                   asLevel ? level : -1f, level);
                 _cross = fresh || rescaled ? 1f : 0f;
+            }
+            else if (sameLevel)
+            {
+                // The same layer at the new value - no fade starts, and one
+                // already under way carries on with the right number in it.
+                if (_incoming != null) _incoming.Dispose();
+                _incoming = Render(null, glyph, accent, (int)_targetW, _h, false, _scale, level, level);
             }
 
             if (fresh)
@@ -454,7 +648,14 @@ namespace Keycap
             {
                 _timer = new Timer();
                 _timer.Interval = 1500;
-                _timer.Tick += delegate { FadeOut(); };
+                _timer.Tick += delegate
+                {
+                    // After a Flash, back to the persistent message rather than away.
+                    if (_stickyMsg == null) { FadeOut(); return; }
+                    IntPtr ctx = EnterDpi();
+                    try { ShowCore(_stickyMsg, _stickyGlyph, _stickyAccent, true, -1, IntPtr.Zero); }
+                    finally { LeaveDpi(ctx); }
+                };
                 _timer.Start();
             }
         }
@@ -477,9 +678,33 @@ namespace Keycap
             }
         }
 
+        /// <summary>
+        /// A level's width. It is the same for every value - room is kept for
+        /// "100%" - so the pill never resizes while the level changes.
+        /// </summary>
+        static float MeasureLevel(float s)
+        {
+            return SlackW * s + IconAdvance * s + BarW * s + BarGap * s + NumberWidth(s);
+        }
+
+        /// <summary>The widest number, "100%", on whichever text path is wider - as Measure does.</summary>
+        static float NumberWidth(float s)
+        {
+            using (Bitmap probe = new Bitmap(1, 1))
+            using (Graphics g = Graphics.FromImage(probe))
+            using (Font f = Theme.Font(TextPt * s, FontStyle.Regular))
+            {
+                g.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
+                float gdiPlus = g.MeasureString("100%", f).Width;
+                float gdi = TextRenderer.MeasureText(g, "100%", f,
+                                new Size(int.MaxValue, int.MaxValue), NumberFlags).Width;
+                return (float)Math.Ceiling(Math.Max(gdiPlus, gdi));
+            }
+        }
+
         static void Place()
         {
-            Rectangle wa = WorkArea(ActiveMonitor());   // stops at the taskbar
+            Rectangle wa = WorkArea(_shownOn);   // stops at the taskbar; the pill's own monitor, see ShowCore
             _restY = wa.Bottom - _h - (int)Math.Round(BottomGap * _scale);
             _form.Left = wa.Left + (wa.Width - (int)_w) / 2;
         }
@@ -506,7 +731,7 @@ namespace Keycap
             bool settled = _cross >= 1f && _outgoing == null;
             Bitmap bmp = new Bitmap(w, h, PixelFormat.Format32bppArgb);
             bmp.SetResolution(96f, 96f);
-            Bitmap back = Render("", Sym.None, _accent, w, h, true, _scale);
+            Bitmap back = Render("", Sym.None, _accent, w, h, true, _scale, -1f, 0);
             using (Graphics g = Graphics.FromImage(bmp))
             {
                 g.SmoothingMode = SmoothingMode.AntiAlias;
@@ -521,17 +746,15 @@ namespace Keycap
 
                 // Clip to the pill so a layer wider than the animating window
                 // cannot spill past the rounded edge.
-                float line = _scale;
-                RectangleF r = new RectangleF(line / 2f, line / 2f,
-                                              w - line * 1.5f, h - line * 1.5f);
-                using (GraphicsPath path = Theme.Rounded(r, Radius * _scale))
+                using (GraphicsPath path = Theme.Rounded(Edge(w, h), Radius * _scale))
                 {
                     g.SetClip(path);
                     if (settled)
                     {
                         // Nothing is crossing over, so skip the pre-rendered
                         // layer and draw the real thing here, subpixel and all.
-                        Content(g, _msg, _glyph, _accent, w, h, _scale, true);
+                        Content(g, _msg, _glyph, _accent, w, h, _scale, true,
+                                _isLevel ? _shownLevel : -1f, _level);
                     }
                     else
                     {
@@ -608,6 +831,14 @@ namespace Keycap
                 if (_cross > 0.995f) _cross = 1f;
             }
 
+            // A level's bar slides to its new value on the same ease.
+            if (_isLevel)
+            {
+                float dl = _level - _shownLevel;
+                if (Math.Abs(dl) > 0.3f) _shownLevel += dl * 0.34f;
+                else _shownLevel = _level;
+            }
+
             int offset = (int)Math.Round(RiseY * _scale * (255 - _alpha) / 255.0);
 
             try
@@ -618,7 +849,8 @@ namespace Keycap
             }
             catch { }
 
-            if (_alpha == _targetAlpha && _w == _targetW && _cross >= 1f)
+            if (_alpha == _targetAlpha && _w == _targetW && _cross >= 1f
+                && (!_isLevel || _shownLevel == _level))
             {
                 _anim.Stop();
                 if (_targetAlpha == 0 && _pendingHide) { Hide(); return; }
@@ -645,8 +877,21 @@ namespace Keycap
             StartAnim();
         }
 
+        /// <summary>
+        /// Back to the top of the topmost windows. A dimming veil made while the
+        /// pill is up lands above it, and a pill under a veil would be dimmed
+        /// along with the screen it is reporting on.
+        /// </summary>
+        internal static void Raise()
+        {
+            if (_form == null) return;
+            // HWND_TOPMOST; SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE.
+            SetWindowPos(_form.Handle, new IntPtr(-1), 0, 0, 0, 0, 0x1 | 0x2 | 0x10);
+        }
+
         public static void Hide()
         {
+            _stickyMsg = null;
             IntPtr ctx = EnterDpi();
             try { HideCore(); }
             finally { LeaveDpi(ctx); }
