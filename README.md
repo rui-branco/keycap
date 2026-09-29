@@ -36,7 +36,7 @@ every key actually does, and lets you change any of it by clicking a key.
 - **Option → Alt**, where it physically sits, keeping `⌥←/→` word-jump, `⌥⇧←/→` word select and `⌥⌫` delete-word
 - **Option+Tab** is the app switcher; right **Command** stays the Windows key
 - **Scancode fixes** for the keys Apple reports differently, applied per keyboard layout
-- **The function row does what is printed on it** — brightness, Mission Control, Search, microphone mute, media, volume
+- **The function row does what is printed on it** — brightness (on an external monitor too, over DDC/CI), Mission Control, Search, microphone mute, media, volume
 - **Phrases** — a key combination, or a word that expands as you type it
 - **Keyboard battery**, read from the HID stack
 - **Follows the Windows layout** — switching language switches the board and the remaps together
@@ -70,6 +70,7 @@ releases every modifier and turns remapping off.
 | `⌥←` `⌥→` | Jump word by word — add `⇧` to select |
 | `⌥⌫` | Delete previous word |
 | `⌥Tab` | App switcher |
+| `F1` / `F2` | Brightness down / up on the display under the mouse |
 | `⌥F1`–`F12` | The real function keys |
 | Both `⇧` together | Release everything, remapping off |
 
@@ -153,6 +154,27 @@ the one a call app actually picks up. Note that this is an endpoint-level mute:
 Teams will receive silence, but its own mute button will not know, so its UI
 will still show you as unmuted.
 
+### Brightness
+
+Windows only drives brightness for built-in panels. For an external monitor
+Keycap sends the DDC/CI brightness command (VCP `0x10`) straight to the monitor
+— the same channel its own buttons use. `F1` and `F2` go to the display under
+the mouse pointer, or to the displays that answer if that one cannot be
+controlled; Settings can make them move every display together instead. The
+indicator appears on that display too.
+
+Some monitors leave brightness out of the capability list they report even
+though they accept it, so Keycap does not consult the list — it just asks. A
+monitor that does not answer usually has DDC/CI switched off in its own menu,
+and some models do not offer it at all. **Settings** lists every connected
+display, with a brightness slider for each one Keycap can control.
+
+A monitor that does not answer is dimmed in software instead: Keycap lays a
+click-through dark layer over its picture, so `F1` and `F2` still work on it.
+That can only go below the monitor's own brightness, and it bottoms out at a
+level that stays readable. It is left out of screenshots and screen shares, a
+full-screen game may draw over it, and it can be switched off in **Settings**.
+
 ### The Globe key
 
 Not bindable. Raw Input on both the keyboard collection and Apple's vendor page
@@ -172,6 +194,10 @@ text 056 ± § 0816
 phrase 5 69 hello there
 word mymail me@example.com
 indicator 1
+brightness 1
+brightness-step 10
+brightness-all 0
+softdim 1
 ```
 
 Unhandled errors append to `%LOCALAPPDATA%\Keycap\error.log`.
