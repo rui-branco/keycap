@@ -78,6 +78,19 @@ namespace Keycap
             // the mapping as it is created.
             Mapping.Load();
 
+            // Whatever else happens on the way out, no display may be left
+            // with its output scaled: a gamma ramp outlives the process that
+            // set it, so exiting without restoring one would strand the
+            // screen dimmed with nothing running that knows how to undim it.
+            // This fires on the ordinary exits that run the message loop
+            // down; the normal exit also restores in OnFormClosing, and
+            // Program.Main's crash handler calls Dimmer.Clear itself, in
+            // case ApplicationExit is never reached. A process killed
+            // outright runs none of these - nothing in-process can - so this
+            // is best-effort covering every exit Keycap gets to see.
+            // Dimmer.Clear tolerates being called twice.
+            Application.ApplicationExit += delegate { Dimmer.Clear(); };
+
             BuildRail();
             BuildPages();
             BuildTray();
@@ -144,6 +157,12 @@ namespace Keycap
             }
             Hook.Stop();       // never leave a hook behind
             Osd.Hide();
+            // Nor leave a display dimmed: past the early return above this is
+            // a real exit (closing to the tray never reaches here), so close
+            // every veil and give every gamma-dimmed display its own ramp
+            // back. ApplicationExit calls this again on the way out - both
+            // halves of Dimmer.Clear are no-ops the second time.
+            Dimmer.Clear();
             if (_tray != null) { _tray.Visible = false; _tray.Dispose(); _tray = null; }
             base.OnFormClosing(e);
         }
@@ -303,7 +322,18 @@ namespace Keycap
         /// </summary>
         void RefreshAll()
         {
+            // A hand edit can flip the dimming switches as easily as a click
+            // in Settings can, but only a click rescans the displays - so
+            // without this the file could say software or full dimming is off
+            // while a gamma ramp the new text disowns stays on the display,
+            // and the Settings page would show off over a dimmed screen. A
+            // scan reconciles both directions: off restores ramps and clears
+            // veils, on re-routes each display the new way.
+            bool softDim = Mapping.SoftDim;
+            bool fullDim = Mapping.FullDim;
             Mapping.Load();
+            if (Mapping.SoftDim != softDim || Mapping.FullDim != fullDim)
+                Brightness.Scan();
             RefreshBattery();
             foreach (Page p in _pages) p.Reload();
 

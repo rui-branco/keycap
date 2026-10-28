@@ -17,7 +17,7 @@ namespace Keycap
         ScrollPage _scroll;
         TextLine _hKeyboard, _hBright, _hDisplays, _hSystem, _hFile;
         RowCard _keyboard, _bright, _displays, _system, _file;
-        ToggleChip _indicator, _brightKeys, _softDim, _startup;
+        ToggleChip _indicator, _brightKeys, _softDim, _fullDim, _startup;
         DropChip _step, _which;
 
         /// <summary>What "Each press" offers, in the order it lists them.</summary>
@@ -74,6 +74,15 @@ namespace Keycap
             {
                 Mapping.SoftDim = on;
                 Mapping.Save();
+                // Full dimming is out of reach while software dimming is off,
+                // but its stored choice is left as it is, to come back with
+                // this switch. The row's words follow the switch's reach, so
+                // the card is repainted as it changes.
+                if (_fullDim != null)
+                {
+                    _fullDim.Enabled = on;
+                    _bright.Invalidate();
+                }
                 if (!on) Dimmer.Clear();
                 Brightness.Scan();      // every display is sorted again, veils and all
             });
@@ -82,6 +91,21 @@ namespace Keycap
                 + "so F1 and F2 still work on it. It can only go down from the monitor's own "
                 + "brightness, a full-screen game may draw over it, and screenshots show the real "
                 + "picture.", _softDim);
+
+            _fullDim = Switch(Mapping.FullDim, delegate(bool on)
+            {
+                Mapping.FullDim = on;
+                Mapping.Save();
+                Brightness.Scan();      // every display is sorted again, ramps and all
+            });
+            // Full dimming rides on software dimming: with that off, this
+            // switch is out of reach but keeps its position - the stored
+            // choice is not thrown away, only held until it can act again.
+            _fullDim.Enabled = Mapping.SoftDim;
+            _bright.Add("Full dimming",
+                "The dimming happens at the display's output instead of under a dark veil, "
+                + "so the mouse pointer, dialogs and everything else on that display dim too. "
+                + "It only affects displays Keycap already dims in software.", _fullDim);
 
             _step = Chip("5%", "10%", "20%");
             _which = Chip("Under the mouse", "All together");
@@ -292,6 +316,9 @@ namespace Keycap
             _indicator.SetQuiet(Mapping.ShowIndicator);
             _brightKeys.SetQuiet(Mapping.BrightnessKeys);
             _softDim.SetQuiet(Mapping.SoftDim);
+            _fullDim.SetQuiet(Mapping.FullDim);
+            _fullDim.Enabled = Mapping.SoftDim;
+            _bright.Invalidate();       // the Full dimming row repaints at its reach
             _step.SetIndexQuiet(NearestStep(Mapping.BrightnessStep));
             _which.SetIndexQuiet(Mapping.BrightnessAll ? 1 : 0);
             _startup.SetQuiet(Startup.Enabled());

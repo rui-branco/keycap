@@ -182,6 +182,31 @@ That can only go below the monitor's own brightness, and it bottoms out at a
 level that stays readable. It is left out of screenshots and screen shares, a
 full-screen game may draw over it, and it can be switched off in **Settings**.
 
+**Full dimming**, also in **Settings**, dims that same kind of display at its
+output instead of under the layer: the display's gamma ramp is scaled down,
+so the mouse pointer, dialogs and everything else on the display dim as well
+— including Keycap's own indicator. Because the scaling happens after the
+framebuffer, screenshots and screen shares still show the real picture, as
+they do with the layer. Any colour calibration the display already has is
+kept; only how much of it gets out is reduced.
+
+Windows will not accept a ramp darker than about half output, so below
+that level Keycap holds the ramp at its floor and adds the dark layer for
+the rest: the pointer, dialogs and everything else still dim — to the
+floor — and the picture as a whole reaches the chosen level.
+
+It has limits. A secure desktop — the UAC prompt or the lock screen — may
+not be affected. A display using HDR or Advanced Colour may refuse its ramp
+altogether; Keycap reads the ramp back to check, and quietly falls back to
+the dark layer on any display where the scaling did not take. And like every
+gamma ramp, this is last-write-wins: Night Light, f.lux and colour-profile
+loaders write their own, so whichever runs last is what you see. Keycap
+reapplies its scaling whenever it next changes a level or rescans the
+displays, and puts the display's own ramp back at 100%, when the setting is
+switched off, and when it exits. That ramp is the one the display had before
+Keycap first dimmed it — so if another tool changed the colour while Keycap
+was dimming, Keycap's restore at the end may undo that change too.
+
 ### The Globe key
 
 Not bindable. Raw Input on both the keyboard collection and Apple's vendor page
@@ -205,6 +230,7 @@ brightness 1
 brightness-step 10
 brightness-all 0
 softdim 1
+fulldim 0
 ```
 
 Unhandled errors append to `%LOCALAPPDATA%\Keycap\error.log`.

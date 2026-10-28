@@ -180,11 +180,20 @@ namespace Keycap
         }
 
         protected override void OnTextChanged(EventArgs e) { Invalidate(); base.OnTextChanged(e); }
+        protected override void OnEnabledChanged(EventArgs e) { Invalidate(); base.OnEnabledChanged(e); }
         protected override void OnMouseEnter(EventArgs e) { _hover = true; Invalidate(); base.OnMouseEnter(e); }
         protected override void OnMouseLeave(EventArgs e) { _hover = false; _down = false; Invalidate(); base.OnMouseLeave(e); }
-        protected override void OnMouseDown(MouseEventArgs e) { _down = true; Invalidate(); base.OnMouseDown(e); }
+        protected override void OnMouseDown(MouseEventArgs e)
+        {
+            // A disabled switch takes no input at all. Windows normally does
+            // not route clicks to it, but the greyed painting should not have
+            // to rely on that routing to stay honest.
+            if (!Enabled) { _down = false; return; }
+            _down = true; Invalidate(); base.OnMouseDown(e);
+        }
         protected override void OnMouseUp(MouseEventArgs e)
         {
+            if (!Enabled) { _down = false; return; }
             bool click = _down && ClientRectangle.Contains(e.Location);
             _down = false;
             if (click) Checked = !Checked;
@@ -201,33 +210,46 @@ namespace Keycap
             const float tw = 40f, th = 20f;
             float tx = Width - tw - 0.5f, ty = (Height - th) / 2f;
 
+            // The colours this switch would be; a disabled one fades them
+            // into the backdrop, the way FlatButton greys itself, so it reads
+            // as out of reach rather than as merely off. Hover and press mean
+            // nothing while disabled, and are not let into the colours.
+            Color ink = _checked || _hover ? Theme.Text : Theme.Dim;
+            Color trackFill = _checked ? (_hover ? Theme.AccentHi : Theme.Accent)
+                                       : (_hover ? Theme.Hover : Theme.Field);
+            Color trackEdge = Theme.Dim;
+            Color knobFill = _checked ? Color.White : Theme.Text;
+            if (!Enabled)
+            {
+                ink = Theme.Blend(BackColor, ink, 0.4f);
+                trackFill = Theme.Blend(BackColor, trackFill, 0.45f);
+                trackEdge = Theme.Blend(BackColor, trackEdge, 0.45f);
+                knobFill = Theme.Blend(BackColor, knobFill, 0.4f);
+            }
+            bool live = Enabled && _hover;
+
             if (!string.IsNullOrEmpty(Text))
                 TextRenderer.DrawText(g, Text, Font,
                     new Rectangle(0, 0, (int)tx - 10, Height),
-                    _checked || _hover ? Theme.Text : Theme.Dim,
+                    ink,
                     TextFormatFlags.Right | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
 
             RectangleF track = new RectangleF(tx, ty, tw, th);
             using (GraphicsPath p = Theme.Rounded(track, th / 2f))
             {
-                if (_checked)
-                    using (SolidBrush b = new SolidBrush(_hover ? Theme.AccentHi : Theme.Accent))
-                        g.FillPath(b, p);
-                else
-                {
-                    using (SolidBrush b = new SolidBrush(_hover ? Theme.Hover : Theme.Field))
-                        g.FillPath(b, p);
-                    using (Pen pen = new Pen(Theme.Dim, 1f)) g.DrawPath(pen, p);
-                }
+                using (SolidBrush b = new SolidBrush(trackFill))
+                    g.FillPath(b, p);
+                if (!_checked)
+                    using (Pen pen = new Pen(trackEdge, 1f)) g.DrawPath(pen, p);
             }
 
             // The knob grows under the pointer and stretches while pressed.
-            float kd = _hover ? 14f : 12f;
-            float kw = _down ? kd + 3f : kd;
+            float kd = live ? 14f : 12f;
+            float kw = Enabled && _down ? kd + 3f : kd;
             float kx = _checked ? tx + tw - (th - kd) / 2f - kw : tx + (th - kd) / 2f;
             RectangleF knob = new RectangleF(kx, ty + (th - kd) / 2f, kw, kd);
             using (GraphicsPath p = Theme.Rounded(knob, kd / 2f))
-            using (SolidBrush b = new SolidBrush(_checked ? Color.White : Theme.Text))
+            using (SolidBrush b = new SolidBrush(knobFill))
                 g.FillPath(b, p);
         }
     }

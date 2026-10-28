@@ -102,6 +102,18 @@ namespace Keycap
         /// <summary>Dim, in software, a display that does not answer DDC/CI.</summary>
         public static bool SoftDim = true;
 
+        /// <summary>
+        /// Dim a software-dimmed display at its output instead of with a veil
+        /// (see Gamma). Only meaningful while SoftDim is on: it is kept stored
+        /// when SoftDim is switched off, so turning software dimming back on
+        /// restores the choice rather than asking again.
+        /// </summary>
+        public static bool FullDim = false;
+
+        /// <summary>Whether full dimming is in force right now - software
+        /// dimming on, and full dimming chosen on top of it.</summary>
+        public static bool FullDimActive { get { return DimMath.Applies(SoftDim, FullDim); } }
+
         // Software brightness by monitor interface path, only below 100. The
         // brightness worker reads it while the UI thread writes it, so it is
         // only touched under _dimLock.
@@ -412,12 +424,13 @@ namespace Keycap
             sb.AppendLine("#                       phrase <mods> <vk> <text>");
             sb.AppendLine("#                       word <trigger> <text>");
             sb.AppendLine("#                       brightness <0|1>, brightness-step <percent>, brightness-all <0|1>");
-            sb.AppendLine("#                       softdim <0|1>, dim <monitor path> <percent>");
+            sb.AppendLine("#                       softdim <0|1>, fulldim <0|1>, dim <monitor path> <percent>");
             sb.AppendLine("indicator " + (ShowIndicator ? "1" : "0"));
             sb.AppendLine("brightness " + (BrightnessKeys ? "1" : "0"));
             sb.AppendLine("brightness-step " + BrightnessStep);
             sb.AppendLine("brightness-all " + (BrightnessAll ? "1" : "0"));
             sb.AppendLine("softdim " + (SoftDim ? "1" : "0"));
+            sb.AppendLine("fulldim " + (FullDim ? "1" : "0"));
             lock (_dimLock)
                 foreach (KeyValuePair<string, int> d in _dims)
                     sb.AppendLine("dim " + d.Key + " " + d.Value);
@@ -459,6 +472,7 @@ namespace Keycap
                         BrightnessStep = Math.Max(1, Math.Min(50, int.Parse(p[1])));
                     else if (p[0] == "brightness-all" && p.Length >= 2) BrightnessAll = p[1] != "0";
                     else if (p[0] == "softdim" && p.Length >= 2) SoftDim = p[1] != "0";
+                    else if (p[0] == "fulldim" && p.Length >= 2) FullDim = p[1] != "0";
                     else if (p[0] == "dim" && p.Length >= 3)
                     {
                         // The path never holds a space, so it is one field.

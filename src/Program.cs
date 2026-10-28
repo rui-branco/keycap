@@ -50,8 +50,14 @@ namespace Keycap
             catch (Exception ex)
             {
                 // A crash must not leave a key held down - the message box
-                // below waits for a click.
+                // below waits for a click - nor a display left dimmed: this is
+                // the one exit where no form is left to close, so the veils
+                // are closed and every gamma ramp put back from here. It is a
+                // defensive attempt, not a guarantee: ApplicationExit may
+                // never fire if the process dies harder than this catch, and
+                // Dimmer.Clear is safe to call again if it does.
                 try { Hook.Stop(); } catch { }
+                try { Dimmer.Clear(); } catch { }
                 LogError(ex);
                 MessageBox.Show(ex.ToString(), "Keycap");
             }
