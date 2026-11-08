@@ -1,8 +1,10 @@
+param([string]$OutputDirectory = "bin")
+
 $ErrorActionPreference = "Stop"
 
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $src  = Join-Path $root "src"
-$bin  = Join-Path $root "bin"
+$bin  = Join-Path $root $OutputDirectory
 $csc  = "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
 
 if (-not (Test-Path $csc)) { throw "csc.exe not found at $csc" }

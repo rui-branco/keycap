@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -204,9 +204,12 @@ namespace Keycap
         {
             switch (dst)
             {
-                case "LCtrl": case "RCtrl": return "Ctrl";
-                case "LWin": case "RWin": return "Windows key";
-                case "LAlt": case "RAlt": return "Alt";
+                case "LCtrl": return "left Ctrl";
+                case "RCtrl": return "right Ctrl";
+                case "LWin": return "Windows key";
+                case "RWin": return "right Windows key";
+                case "LAlt": return "left Alt";
+                case "RAlt": return "right Alt";
             }
             return dst;
         }

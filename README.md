@@ -35,8 +35,9 @@ every key actually does, and lets you change any of it by clicking a key.
 - **Command → Ctrl** — `⌘C`, `⌘V`, `⌘A`, `⌘Z` behave as they do on macOS
 - **Option → Alt**, where it physically sits, keeping `⌥←/→` word-jump, `⌥⇧←/→` word select and `⌥⌫` delete-word
 - **Option+Tab** is the app switcher; right **Command** stays the Windows key
+- Both left and right modifiers can be remapped by clicking them on the board; right Option keeps AltGr unless you change its mapping.
 - **Scancode fixes** for the keys Apple reports differently, applied per keyboard layout
-- **The function row does what is printed on it** — brightness (on an external monitor too, over DDC/CI), Mission Control, Search, microphone mute, media, volume
+- **Function-row actions** — brightness (on an external monitor too, over DDC/CI), Mission Control, Search, microphone mute, F6 screen lock, media, volume
 - **Phrases** — a key combination, or a word that expands as you type it
 - **Keyboard battery**, read from the HID stack
 - **Follows the Windows layout** — switching language switches the board and the remaps together
@@ -73,6 +74,7 @@ turns remapping off.
 | `⌥⌫` | Delete previous word |
 | `⌥Tab` | App switcher |
 | `F1` / `F2` | Brightness down / up on the display under the mouse |
+| `F6` | Lock the screen on release; hold Option for the normal F6 key |
 | `⌥F1`–`F12` | The real function keys |
 | Both `⇧` together | Release everything, remapping off |
 

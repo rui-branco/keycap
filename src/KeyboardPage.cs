@@ -389,9 +389,11 @@ namespace Keycap
             {
                 _editKind = "mod";
                 _choices.Add(new string[] { "Leave this key alone", "" });
-                _choices.Add(new string[] { "Act as Ctrl", "LCtrl" });
-                _choices.Add(new string[] { "Act as the Windows key", "LWin" });
-                _choices.Add(new string[] { "Act as Alt", "LAlt" });
+                _choices.Add(new string[] { "Act as left Ctrl", "LCtrl" });
+                _choices.Add(new string[] { "Act as right Ctrl", "RCtrl" });
+                _choices.Add(new string[] { "Act as Windows key", "LWin" });
+                _choices.Add(new string[] { "Act as left Alt", "LAlt" });
+                _choices.Add(new string[] { "Act as right Alt", "RAlt" });
                 string now = mod == null ? "" : mod.Dst;
                 for (int i = 0; i < _choices.Count; i++)
                     if (_choices[i][1] == now) pick = i;

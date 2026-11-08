@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
@@ -85,6 +85,8 @@ namespace Keycap
         static extern IntPtr GetModuleHandle(string name);
         [DllImport("user32.dll", SetLastError = true)]
         static extern uint SendInput(uint n, INPUT[] inputs, int size);
+        [DllImport("user32.dll", SetLastError = true)]
+        static extern bool LockWorkStation();
         [DllImport("user32.dll")]
         static extern uint MapVirtualKey(uint code, uint mapType);
         [DllImport("user32.dll")]
@@ -111,7 +113,7 @@ namespace Keycap
         const int VK_HOME = 0x24, VK_END = 0x23;
         const int VK_BACK = 0x08, VK_DELETE = 0x2E, VK_TAB = 0x09, VK_SPACE = 0x20;
         const int VK_F1 = 0x70, VK_F2 = 0x71, VK_F3 = 0x72, VK_F4 = 0x73, VK_F5 = 0x74;
-        const int VK_F7 = 0x76, VK_F12 = 0x7B;
+        const int VK_F6 = 0x75, VK_F7 = 0x76, VK_F12 = 0x7B;
         const int VK_Q = 0x51, VK_M = 0x4D, VK_S = 0x53;
         const int VK_MEDIA_NEXT = 0xB0, VK_MEDIA_PREV = 0xB1;
         const int VK_MEDIA_PLAY = 0xB3;
@@ -121,14 +123,17 @@ namespace Keycap
         // ---- state ----------------------------------------------------------
         static IntPtr _hook = IntPtr.Zero;
         static HookProc _proc;          // kept alive; a collected delegate crashes the hook
-        // _cmdDown and _winHeld are also read by the injection thread (see Bare),
-        // so they are volatile and always set before the key they stand for is sent.
-        static volatile bool _cmdDown;  // physical Command  (reports as LWin)
+        // _winHeld is also read by the injection thread (see Bare). Mapped
+        // modifier ownership is shared with that thread through ModifierState.
+        static volatile bool _cmdDown;  // either Command mapped to either Ctrl
         static bool _optDown;           // physical Option   (reports as LAlt)
         static bool _altTabbing;        // Option+Tab switcher is open
         static volatile bool _winHeld;  // we are holding Win on Option's behalf
         static bool _altHeld;           // we are holding Alt on Option's behalf
         static bool _optUsed;           // a key was pressed while Option was held
+        static bool _lockDown;         // lock is requested on F6 release, once per press
+        static string _optDst;          // target chosen when left Option went down
+        static readonly ModifierState _modifiers = new ModifierState(SendModifier);
 
         public static bool Running { get { return _hook != IntPtr.Zero; } }
         public static event EventHandler Changed;
@@ -264,7 +269,7 @@ namespace Keycap
         static void CheckAlive()
         {
             if (_hook == IntPtr.Zero) return;
-            if (_cmdDown || _optDown || _winHeld || _altHeld || _altTabbing || _pressed.Count > 0) return;  // mid-chord
+            if (_lockDown || _modifiers.Any || _cmdDown || _optDown || _winHeld || _altHeld || _altTabbing || _pressed.Count > 0) return;  // mid-chord
             if (unchecked(Environment.TickCount - _rearmed) < 3000) return;
 
             LASTINPUTINFO li = new LASTINPUTINFO();
@@ -292,12 +297,15 @@ namespace Keycap
         /// <summary>Drop every key we might be holding on the OS's behalf.</summary>
         public static void ReleaseAll()
         {
-            if (_altTabbing) { Key(VK_LMENU, false); _altTabbing = false; }
-            if (_winHeld) { _winHeld = false; Key(VK_LWIN, false); }
-            if (_altHeld) { Key(VK_LMENU, false); _altHeld = false; }
-            if (_cmdDown) { _cmdDown = false; Key(VK_LCONTROL, false); }
+            bool alt = _altTabbing || _altHeld, win = _winHeld;
+            _altTabbing = _altHeld = _winHeld = _cmdDown = false;
+            _modifiers.Clear();
+            if (alt) Key(VK_LMENU, false);
+            if (win) Key(VK_LWIN, false);
             _optDown = false;
             _optUsed = false;
+            _optDst = null;
+            _lockDown = false;
 
             // Remapped keys too: their ups would otherwise never be sent.
             foreach (int to in _pressed.Values)
@@ -448,7 +456,8 @@ namespace Keycap
         /// </summary>
         static void Bare(Action act)
         {
-            bool cmd = _cmdDown, win = _winHeld, alt = _altHeld;   // read on the hook thread
+            int[] modifiers = _modifiers.Targets();
+            bool win = _winHeld, alt = _altHeld;   // read on the hook thread
             // Alt is not put back afterwards: pressed again with nothing after
             // it, letting go of Option would open the menu bar. The next key
             // that needs Alt presses it again.
@@ -458,8 +467,13 @@ namespace Keycap
                 // A key between Alt going down and up keeps its release from
                 // opening the menu bar. 0xE8 is unassigned, so nothing reacts
                 // to it - the same mask AutoHotkey uses.
-                if (alt) { Tap(VK_MASK); Key(VK_LMENU, false); }
-                if (cmd) Key(VK_LCONTROL, false);
+                bool mask = alt;
+                foreach (int modifier in modifiers)
+                    if (modifier == VK_LMENU || modifier == VK_RMENU ||
+                        modifier == VK_LWIN || modifier == VK_RWIN) mask = true;
+                if (mask) Tap(VK_MASK);
+                if (alt) Key(VK_LMENU, false);
+                foreach (int modifier in modifiers) Key(modifier, false);
                 if (win) Key(VK_LWIN, false);
                 act();
                 // Put back only what is still held: a Command or Option let go
@@ -467,7 +481,7 @@ namespace Keycap
                 // Checked again after the restore, for a release that lands in
                 // between.
                 if (win && _winHeld) { Key(VK_LWIN, true); if (!_winHeld) Key(VK_LWIN, false); }
-                if (cmd && _cmdDown) { Key(VK_LCONTROL, true); if (!_cmdDown) Key(VK_LCONTROL, false); }
+                foreach (int modifier in modifiers) _modifiers.Restore(modifier);
             });
         }
 
@@ -574,7 +588,30 @@ namespace Keycap
         }
 
         /// <summary>Left Option is set to act as Alt rather than Windows.</summary>
-        static bool OptAsAlt { get { return DstFor("LAlt", "LAlt") == "LAlt"; } }
+        static bool OptAsAlt { get { return _optDst == "LAlt"; } }
+
+        static void SendModifier(int vk, bool down)
+        {
+            // A mapped key and left Option can share the same output.
+            if (!down && ((vk == VK_LMENU && (_altHeld || _altTabbing)) ||
+                          (vk == VK_LWIN && _winHeld))) return;
+            Key(vk, down);
+        }
+
+        static void ReleaseOptionKey(int vk)
+        {
+            if (!_modifiers.Holds(vk)) Key(vk, false);
+        }
+
+        static bool HandleModifier(int vk, string source, bool down)
+        {
+            bool handled = _modifiers.Handle(vk, VkOf(DstFor(source, source)), down);
+            _cmdDown = _modifiers.IsPressed(VK_LWIN, VK_LCONTROL) ||
+                       _modifiers.IsPressed(VK_LWIN, 0xA3) ||
+                       _modifiers.IsPressed(VK_RWIN, VK_LCONTROL) ||
+                       _modifiers.IsPressed(VK_RWIN, 0xA3);
+            return handled;
+        }
 
         static int VkOf(string name)
         {
@@ -638,7 +675,7 @@ namespace Keycap
         /// </summary>
         static void Reconcile()
         {
-            if (!_cmdDown && !_optDown && !_winHeld && !_altHeld && !_altTabbing && _pressed.Count == 0) return;
+            if (!_modifiers.Any && !_cmdDown && !_optDown && !_winHeld && !_altHeld && !_altTabbing && _pressed.Count == 0) return;
             if (unchecked(Environment.TickCount - _lastEvent) < 4000) return;
             ReleaseAll();
         }
@@ -650,20 +687,34 @@ namespace Keycap
             int vk = (int)k.vkCode;
             int sc = (int)k.scanCode;
 
-            // ---- modifiers: Command -> Ctrl, Option -> Alt -----------------
-            if (vk == VK_LWIN)
+            // A lock press owns its repeats and release even if a modifier
+            // changes while held. Lock after release so F6 is already up.
+            if (vk == VK_F6 && _lockDown)
             {
-                string dst = DstFor("LWin", "LCtrl");
-                if (dst == "LWin") return false;          // left as the Windows key
-                _cmdDown = down && dst == "LCtrl";
-                int target = VkOf(dst);
-                if (target == 0) return false;
-                Key(target, down);
+                if (!down)
+                {
+                    ReleaseAll();
+                    Post(LockDesktop);
+                }
                 return true;
             }
+
+            // ---- modifiers: Command -> Ctrl, Option -> Alt -----------------
+            if (vk == VK_LWIN)
+                return HandleModifier(vk, "LWin", down);
+            if (vk == VK_RWIN)
+                return HandleModifier(vk, "RWin", down);
+            if (vk == VK_RMENU)
+                return HandleModifier(vk, "RAlt", down);
+            if (vk == VK_LCONTROL)
+                return HandleModifier(vk, "LCtrl", down);
+            if (vk == 0xA3)
+                return HandleModifier(vk, "RCtrl", down);
             if (vk == VK_LMENU)
             {
-                string optDst = DstFor("LAlt", "LAlt");
+                if (_modifiers.IsPressed(vk)) return HandleModifier(vk, "LAlt", down);
+                if (down && !_optDown) _optDst = DstFor("LAlt", "LAlt");
+                string optDst = _optDst ?? "LAlt";
                 if (optDst == "LAlt")
                 {
                     // Option as Alt. Alt goes down with Option, so Alt+click and
@@ -680,17 +731,13 @@ namespace Keycap
                     else
                     {
                         _optDown = false;
-                        if (_altHeld) { Key(VK_LMENU, false); _altHeld = false; }
+                        if (_altHeld) { _altHeld = false; ReleaseOptionKey(VK_LMENU); }
                     }
                     return true;
                 }
                 if (optDst != "LWin")
                 {
-                    int t = VkOf(optDst);
-                    if (t == 0) return false;
-                    _optDown = false;
-                    Key(t, down);
-                    return true;
+                    return HandleModifier(vk, "LAlt", down);
                 }
                 _optDown = down;
                 if (down)
@@ -701,13 +748,13 @@ namespace Keycap
                 {
                     if (_altTabbing)
                     {
-                        Key(VK_LMENU, false);   // releasing Option commits the switcher
                         _altTabbing = false;
+                        ReleaseOptionKey(VK_LMENU);   // releasing Option commits the switcher
                     }
                     else if (_winHeld)
                     {
                         _winHeld = false;
-                        Key(VK_LWIN, false);
+                        ReleaseOptionKey(VK_LWIN);
                     }
                     else if (!_optUsed)
                     {
@@ -721,8 +768,7 @@ namespace Keycap
                 // and would open Start in the middle of Option+Tab.
                 return true;
             }
-            // right Command stays the Windows key; Control stays Control;
-            // right Option stays AltGr - all pass through untouched.
+            // Unconfigured right modifiers pass through, preserving AltGr.
 
             if (!down) return ScanRemap(k, false);
 
@@ -816,7 +862,7 @@ namespace Keycap
                 {
                     if (!_altTabbing)
                     {
-                        if (_winHeld) { _winHeld = false; Key(VK_LWIN, false); }
+                        if (_winHeld) { _winHeld = false; ReleaseOptionKey(VK_LWIN); }
                         Key(VK_LMENU, true);
                         _altTabbing = true;
                     }
@@ -858,6 +904,7 @@ namespace Keycap
                 case VK_F3: Bare(delegate { Tap(VK_TAB, VK_LWIN); }); return true;
                 case VK_F4: Bare(delegate { Tap(VK_S, VK_LWIN); }); return true;   // the magnifier
                 case VK_F5: Audio.ToggleMic(); return true;
+                case VK_F6: _lockDown = true; return true;
                 case VK_F7: Tap(VK_MEDIA_PREV); return true;
                 case 0x77: Tap(VK_MEDIA_PLAY); return true;     // F8
                 case 0x78: Tap(VK_MEDIA_NEXT); return true;     // F9
@@ -872,6 +919,18 @@ namespace Keycap
         /// <summary>Ctrl+key. Shift is left alone: if the user is holding it,
         /// the injected key already inherits it.</summary>
         static void TapCtrl(int vk) { Tap(vk, VK_CONTROL); }
+
+        // Run outside the hook callback. Lock the session while applications
+        // keep running, just as with Windows+L.
+        static void LockDesktop()
+        {
+            try
+            {
+                if (!LockWorkStation())
+                    Program.LogError(new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error()));
+            }
+            catch (Exception ex) { Program.LogError(ex); }
+        }
 
         // ---- per-layout scancode fixes --------------------------------------
 
