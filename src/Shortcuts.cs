@@ -1,4 +1,4 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 
 namespace Keycap
 {
@@ -30,6 +30,7 @@ namespace Keycap
             new string[] { "F2",  "brightness up" },
             new string[] { "F3",  "Task View" },
             new string[] { "F5",  "microphone mute" },
+            new string[] { "F6",  "lock screen" },
             new string[] { "F7",  "previous track" },
             new string[] { "F8",  "play / pause" },
             new string[] { "F9",  "next track" },
