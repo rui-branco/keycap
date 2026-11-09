@@ -148,6 +148,186 @@ namespace Keycap
         /// <summary>Langid whose rules the UI is currently showing.</summary>
         public static int ViewLang = 0;
 
+        // ---- what the hook reads --------------------------------------------
+
+        /// <summary>A scancode rule as the hook uses it, its numbers already read.</summary>
+        public sealed class LiveScan
+        {
+            public int From;          // hardware scancode
+            public int Lang;          // 0 = every layout, else a Windows langid
+            public int To;            // scancode to send instead
+            public bool Broken;       // "to" is not a scancode at all: the key is left as it is
+            public string Text;       // or literal text, when no scancode fits
+            public string ShiftText;
+        }
+
+        /// <summary>A phrase as the hook uses it.</summary>
+        public sealed class LivePhrase
+        {
+            public int Mods, Vk;      // a combination...
+            public string Word;       // ...or a typed trigger; null for a combination
+            public string Upper;      // the trigger in capitals when it is plain ASCII, else null
+            public string Text;
+        }
+
+        /// <summary>
+        /// The mapping as the keyboard hook reads it: a copy made each time the
+        /// mapping changes, and never touched again.
+        ///
+        /// The hook runs on a thread of its own, while the lists above are
+        /// cleared and refilled on the window's thread every time the file is
+        /// re-read. Handing the hook a finished copy, swapped in whole, means it
+        /// takes no lock and never sees a mapping that is half loaded. The copy
+        /// is also the lists boiled down - numbers parsed, phrases sorted by
+        /// kind - so a keystroke costs a few comparisons and leaves no garbage.
+        /// </summary>
+        public sealed class Snapshot
+        {
+            /// <summary>What left Command and left Option act as.</summary>
+            public string CmdDst = "LCtrl", OptDst = "LAlt";
+            public bool OptAsAlt = true;
+            public bool BrightnessKeys = true;
+            public LiveScan[] Scans = new LiveScan[0];
+            public LivePhrase[] Combos = new LivePhrase[0];
+            public LivePhrase[] Words = new LivePhrase[0];
+
+            /// <summary>The rule for a physical key under a layout - the first that fits, as listed.</summary>
+            public LiveScan FindScan(int phys, int lang)
+            {
+                LiveScan[] scans = Scans;
+                for (int i = 0; i < scans.Length; i++)
+                {
+                    LiveScan r = scans[i];
+                    if (r.From == phys && (r.Lang == 0 || r.Lang == lang)) return r;
+                }
+                return null;
+            }
+
+            public LivePhrase FindCombo(int mods, int vk)
+            {
+                LivePhrase[] combos = Combos;
+                for (int i = 0; i < combos.Length; i++)
+                    if (combos[i].Mods == mods && combos[i].Vk == vk) return combos[i];
+                return null;
+            }
+
+            /// <summary>
+            /// The phrase whose trigger word has just been completed - the one
+            /// matching the end of what was typed, which the hook keeps in
+            /// capitals. The longest match wins, so "mail" and "mymail" can both
+            /// exist.
+            /// </summary>
+            public LivePhrase FindWord(char[] typed, int length)
+            {
+                LivePhrase[] words = Words;
+                LivePhrase best = null;
+                string text = null;
+                for (int w = 0; w < words.Length; w++)
+                {
+                    LivePhrase p = words[w];
+                    int n = p.Word.Length;
+                    if (length < n) continue;
+                    if (best != null && n <= best.Word.Length) continue;
+
+                    if (p.Upper != null)
+                    {
+                        int at = length - n, i = 0;
+                        while (i < n && typed[at + i] == p.Upper[i]) i++;
+                        if (i < n) continue;
+                    }
+                    else
+                    {
+                        // A trigger with letters beyond ASCII is compared the way
+                        // it always was, by Windows' own table of capitals.
+                        if (text == null) text = new string(typed, 0, length);
+                        if (string.Compare(text, length - n, p.Word, 0, n,
+                                           StringComparison.OrdinalIgnoreCase) != 0) continue;
+                    }
+                    best = p;
+                }
+                return best;
+            }
+        }
+
+        static volatile Snapshot _live = new Snapshot();
+
+        /// <summary>The mapping as it stands, for the hook. Any thread.</summary>
+        public static Snapshot Live { get { return _live; } }
+
+        /// <summary>
+        /// Make a new snapshot from the lists and hand it to the hook. Runs on
+        /// the window's thread whenever the mapping has been loaded or changed.
+        /// </summary>
+        static void Publish()
+        {
+            Snapshot s = new Snapshot();
+            Mod cmd = FindMod("LWin"), opt = FindMod("LAlt");
+            if (cmd != null) s.CmdDst = cmd.Dst;
+            if (opt != null) s.OptDst = opt.Dst;
+            s.OptAsAlt = s.OptDst == "LAlt";
+            s.BrightnessKeys = BrightnessKeys;
+
+            List<LiveScan> scans = new List<LiveScan>();
+            foreach (Rule r in Scans)
+            {
+                // A key is matched by its scancode written as three hex digits,
+                // capitals. A rule written any other way has never matched one.
+                int from;
+                if (r.From == null
+                    || !int.TryParse(r.From, NumberStyles.AllowHexSpecifier,
+                                     CultureInfo.InvariantCulture, out from)
+                    || from.ToString("X3") != r.From) continue;
+
+                LiveScan l = new LiveScan();
+                l.From = from;
+                l.Lang = r.Lang;
+                l.Text = r.Text;
+                l.ShiftText = r.ShiftText;
+                if (r.Text == null)
+                {
+                    try { l.To = Convert.ToInt32(r.To, 16); }
+                    catch { l.Broken = true; }
+                }
+                scans.Add(l);
+            }
+            s.Scans = scans.ToArray();
+
+            List<LivePhrase> combos = new List<LivePhrase>(), words = new List<LivePhrase>();
+            foreach (Phrase p in Phrases)
+            {
+                LivePhrase l = new LivePhrase();
+                l.Text = p.Text;
+                if (p.IsWord)
+                {
+                    l.Word = p.Word;
+                    l.Upper = AsciiUpper(p.Word);
+                    words.Add(l);
+                }
+                else
+                {
+                    l.Mods = p.Mods;
+                    l.Vk = p.Vk;
+                    combos.Add(l);
+                }
+            }
+            s.Combos = combos.ToArray();
+            s.Words = words.ToArray();
+
+            _live = s;
+        }
+
+        /// <summary>The word in capitals, or null when it is not plain ASCII.</summary>
+        static string AsciiUpper(string word)
+        {
+            char[] c = word.ToCharArray();
+            for (int i = 0; i < c.Length; i++)
+            {
+                if (c[i] > 0x7F) return null;
+                if (c[i] >= 'a' && c[i] <= 'z') c[i] = (char)(c[i] - 32);
+            }
+            return new string(c);
+        }
+
         /// <summary>pt-PT scancode -> what Windows produces from it.</summary>
         /// <summary>
         /// What a key can be made to type. Worded the way the key is read, not
@@ -392,6 +572,9 @@ namespace Keycap
         /// </summary>
         public static void Save()
         {
+            // Every change ends here, so this is where the hook gets to hear of
+            // it - whether or not the file can be written.
+            Publish();
             try
             {
                 Write();
@@ -495,6 +678,7 @@ namespace Keycap
             }
             if (Mods.Count == 0 && Scans.Count == 0) LoadDefaults();
             Modified = System.IO.File.GetLastWriteTime(File_);
+            Publish();
         }
     }
 }
