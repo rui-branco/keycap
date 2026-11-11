@@ -41,6 +41,16 @@ namespace Keycap
 
             bool background = IsBackground(args);
 
+            // Every managed thread stops for a full blocking collection, the keyboard
+            // hook's among them, and a key cannot wait. This keeps the big ones in the
+            // background. Not there before .NET 4.5, where it is simply left as it was.
+            try
+            {
+                System.Runtime.GCSettings.LatencyMode =
+                    System.Runtime.GCLatencyMode.SustainedLowLatency;
+            }
+            catch { }
+
             try
             {
                 Application.EnableVisualStyles();

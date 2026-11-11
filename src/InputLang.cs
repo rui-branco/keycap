@@ -121,6 +121,12 @@ namespace Keycap
 
         [DllImport("user32.dll")]
         static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
+        [DllImport("kernel32.dll")]
+        static extern uint GetCurrentProcessId();
+
+        // Asked once: the hook comes through here on every key, and looking the
+        // process up afresh each time left an object behind on each one.
+        static readonly uint _self = GetCurrentProcessId();
 
         static int _lastSeen;
 
@@ -133,13 +139,14 @@ namespace Keycap
         public static int CurrentLangId()
         {
             IntPtr fg = GetForegroundWindow();
+            uint own = 0;
             if (fg != IntPtr.Zero)
             {
                 uint pid;
                 uint tid = GetWindowThreadProcessId(fg, out pid);
                 // Our own window reports the process default, not what the user
                 // is typing in, so remember the last value from another app.
-                if (pid != (uint)System.Diagnostics.Process.GetCurrentProcess().Id)
+                if (pid != _self)
                 {
                     IntPtr hkl = GetKeyboardLayout(tid);
                     if (hkl != IntPtr.Zero)
@@ -148,9 +155,12 @@ namespace Keycap
                         return _lastSeen;
                     }
                 }
+                else own = tid;
             }
             if (_lastSeen != 0) return _lastSeen;
-            return (int)((long)GetKeyboardLayout(0) & 0xFFFF);
+            // Thread 0 means whoever is asking, and the hook asks from a thread
+            // nobody types into - so with our own window in front, ask its thread.
+            return (int)((long)GetKeyboardLayout(own) & 0xFFFF);
         }
 
         /// <summary>

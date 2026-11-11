@@ -138,6 +138,13 @@ the hook ignores its own output and cannot feed itself. And when a shortcut
 fires, whatever modifier is being held on the OS's behalf is lifted first and
 restored after — otherwise `⌘←` would arrive as `Ctrl+Home` rather than `Home`.
 
+The hook runs on a thread of its own, at time-critical priority. Windows holds
+every keystroke, in every app, until a low-level hook answers — and gives up on
+one that takes longer than 300 ms, letting the key through unremapped. So
+nothing else happens on that thread: the window, the indicator and the battery
+reading live on others, and the mapping reaches the hook as a finished copy it
+never has to lock.
+
 ### Stuck modifiers
 
 Holding Command means Keycap is holding **Ctrl** down for you. If a key-up is

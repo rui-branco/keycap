@@ -29,6 +29,8 @@ namespace Keycap
         // Tracked here, not read back from Visible, which is false for every
         // control while the window itself is hidden in the tray.
         bool _showBattery, _showUpdate;
+        bool _batteryBusy;      // a reading is under way on another thread
+        System.Threading.SynchronizationContext _ui;   // this thread, for work coming back from others
         Toast _toast;
 
         Timer _poll;
@@ -59,6 +61,8 @@ namespace Keycap
         {
             _startHidden = background;
             _instance = this;
+            _ui = System.Threading.SynchronizationContext.Current;
+            if (_ui == null) _ui = new WindowsFormsSynchronizationContext();
             Text = "Keycap";
             BackColor = Theme.Back;
             ForeColor = Theme.Text;
@@ -118,11 +122,16 @@ namespace Keycap
             // place that has to take the indicator down with it. A persistent pill - the
             // mic-muted one - is only cleared by F5, and F5 only exists while the hook is
             // installed, so turning remapping off used to strand it on screen for good.
+            // The hook has a thread of its own, and both Shifts turn remapping off from
+            // there, so this may be raised on it. It is told apart by thread rather than
+            // by InvokeRequired, which answers "no" for as long as the window has no
+            // handle - and the hook is already running by then.
+            int home = System.Threading.Thread.CurrentThread.ManagedThreadId;
             Hook.Changed += delegate
             {
-                if (InvokeRequired)
+                if (System.Threading.Thread.CurrentThread.ManagedThreadId != home && _ui != null)
                 {
-                    try { BeginInvoke((MethodInvoker)OnHookChanged); } catch { }
+                    try { _ui.Post(delegate { OnHookChanged(); }, null); } catch { }
                     return;
                 }
                 OnHookChanged();
@@ -138,6 +147,7 @@ namespace Keycap
 
         void OnHookChanged()
         {
+            if (IsDisposed) return;     // posted from the hook thread, and the window has gone since
             UpdateTray();
             if (!Hook.Running) Osd.Hide();
             foreach (Page p in _pages) p.Reload();
@@ -343,17 +353,48 @@ namespace Keycap
             UpdateTray();
         }
 
+        /// <summary>
+        /// Read the keyboard's charge, off this thread. Asking a Bluetooth keyboard for
+        /// a report takes a few hundred milliseconds, and done here it froze the window
+        /// for that long every time the timer came round. It is not asked at all while
+        /// the window is in the tray: the pill is the only place the answer shows.
+        /// </summary>
         void RefreshBattery()
         {
-            int pct = -1;
-            string name = "";
-            try
-            {
-                List<BatteryInfo> b = Hid.Scan();
-                if (b.Count > 0) { name = b[0].Name; pct = b[0].Percent; }
-            }
-            catch { }
+            if (_batteryBusy || _ui == null) return;
+            if (IsHandleCreated && !Visible) return;
+            _batteryBusy = true;
 
+            System.Threading.SynchronizationContext ui = _ui;
+            System.Threading.ThreadPool.QueueUserWorkItem(delegate
+            {
+                int pct = -1;
+                string name = "";
+                try
+                {
+                    List<BatteryInfo> b = Hid.Scan();
+                    if (b.Count > 0) { name = b[0].Name; pct = b[0].Percent; }
+                }
+                catch { }
+
+                // Nothing may escape here: this is a pool thread, where an exception
+                // ends the program - and posting fails once the window has shut down.
+                try
+                {
+                    ui.Post(delegate
+                    {
+                        _batteryBusy = false;
+                        if (IsDisposed) return;
+                        try { ShowBattery(name, pct); }
+                        catch (Exception ex) { Program.LogError(ex); }
+                    }, null);
+                }
+                catch { }
+            });
+        }
+
+        void ShowBattery(string name, int pct)
+        {
             // Nothing is better than a line saying there is nothing.
             bool show = pct >= 0;
             _battery.Set(name, pct);
@@ -472,6 +513,7 @@ namespace Keycap
             if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
             Activate();
             try { SetForegroundWindow(Handle); } catch { }
+            RefreshBattery();   // not read while the window was away
         }
 
         /// <summary>
