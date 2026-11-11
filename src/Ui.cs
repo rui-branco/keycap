@@ -338,11 +338,15 @@ namespace Keycap
                     new Size(r.TextW, 10000), Theme.Wrap).Height;
                 int block = th + (dh > 0 ? 2 + dh : 0);
                 int y = r.Top + (r.Height - block) / 2;
+                // A row whose control is out of reach reads as out of reach
+                // too: its words drop a step each rather than describing, at
+                // full strength, something the switch beside them refuses.
+                bool off = r.Action != null && !r.Action.Enabled;
                 TextRenderer.DrawText(g, r.Title, _title, new Rectangle(PadX, y, r.TextW, th),
-                    Theme.Text, Theme.Left);
+                    off ? Theme.Dim : Theme.Text, Theme.Left);
                 if (dh > 0)
                     TextRenderer.DrawText(g, r.Detail, _detail, new Rectangle(PadX, y + th + 2, r.TextW, dh),
-                        Theme.Dim, Theme.Wrap);
+                        off ? Theme.Dimmer : Theme.Dim, Theme.Wrap);
             }
         }
     }
