@@ -110,5 +110,21 @@ namespace Keycap
             }
             catch { }
         }
+
+        /// <summary>
+        /// A line in the same log for something that went wrong and was put right
+        /// without an exception - a stuck key let go, say - so what caused it can
+        /// be found next time.
+        /// </summary>
+        public static void LogInfo(string line)
+        {
+            try
+            {
+                if (!Directory.Exists(Dir)) Directory.CreateDirectory(Dir);
+                File.AppendAllText(Path.Combine(Dir, "error.log"),
+                    DateTime.Now.ToString("s") + "  " + line + Environment.NewLine);
+            }
+            catch { }
+        }
     }
 }

@@ -237,6 +237,7 @@ namespace Keycap
         {
             if (_rearmWanted) { _rearmWanted = false; Rearm(); }
             Reconcile();
+            RepairOs();
             CheckAlive();
         }
 
@@ -573,7 +574,27 @@ namespace Keycap
 
         static void Send(INPUT[] inputs)
         {
+            for (int n = 0; n < inputs.Length; n++) Note(ref inputs[n]);
             SendInput((uint)inputs.Length, inputs, InputSize);
+        }
+
+        /// <summary>
+        /// Record what we are about to send for a key, before it goes out (see
+        /// RepairOs). Text carries characters rather than keys, so it is left
+        /// out; Ctrl, Alt and Shift sent by their generic keys count as the
+        /// side Windows will press.
+        /// </summary>
+        static void Note(ref INPUT i)
+        {
+            if (i.type != 1) return;
+            uint f = i.u.ki.dwFlags;
+            if ((f & KEYEVENTF_UNICODE) != 0) return;
+            int vk = i.u.ki.wVk;
+            bool ext = (f & KEYEVENTF_EXTENDEDKEY) != 0;
+            if (vk == VK_SHIFT) vk = VK_LSHIFT;
+            else if (vk == VK_CONTROL) vk = ext ? 0xA3 : VK_LCONTROL;
+            else if (vk == VK_MENU) vk = ext ? VK_RMENU : VK_LMENU;
+            if (vk < 256) _sentDown[vk] = (f & KEYEVENTF_KEYUP) == 0;
         }
 
         /// <summary>
@@ -615,6 +636,7 @@ namespace Keycap
         static void Key(int vk, bool down)
         {
             INPUT i = Vk(vk, down);
+            Note(ref i);
             SendInput(1, ref i, InputSize);
         }
 
@@ -642,6 +664,7 @@ namespace Keycap
                            | (down ? 0 : KEYEVENTF_KEYUP)
                            | (ext ? KEYEVENTF_EXTENDEDKEY : 0);
             i.u.ki.dwExtraInfo = Mark;
+            Note(ref i);
             SendInput(1, ref i, InputSize);
         }
 
@@ -705,6 +728,7 @@ namespace Keycap
         // keystrokes arrived.
         static readonly Queue<Action> _work = new Queue<Action>();
         static Thread _worker;
+        static volatile bool _injecting;    // a job is running on it right now - read by RepairOs
 
         static void Post(Action act)
         {
@@ -727,9 +751,13 @@ namespace Keycap
                     {
                         while (_work.Count == 0) Monitor.Wait(_work);
                         a = _work.Dequeue();
+                        // Set before the lock goes, so there is no moment where
+                        // the queue is empty and nothing looks to be running.
+                        _injecting = true;
                     }
                     try { a(); }
                     catch { }        // one bad phrase must not take the thread down
+                    finally { _injecting = false; }
                 }
             });
             _worker.IsBackground = true;
@@ -757,20 +785,27 @@ namespace Keycap
         static bool ForgeDeckInFront()
         {
             uint pid;
+            string path = ForegroundExe(out pid);
+            string file = System.IO.Path.GetFileName(path);
+            if (string.Equals(file, "Forge Deck.exe", StringComparison.OrdinalIgnoreCase)) return true;
+            return string.Equals(file, "electron.exe", StringComparison.OrdinalIgnoreCase)
+                && path.IndexOf("\\forge-deck", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        /// <summary>The full path of the program in front, or "" when it cannot
+        /// be read - an elevated one cannot be opened from here.</summary>
+        static string ForegroundExe(out uint pid)
+        {
             GetWindowThreadProcessId(GetForegroundWindow(), out pid);
-            if (pid == 0) return false;
+            if (pid == 0) return "";
             IntPtr h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
-            if (h == IntPtr.Zero) return false;
+            if (h == IntPtr.Zero) return "";
             try
             {
                 System.Text.StringBuilder sb = new System.Text.StringBuilder(1024);
                 int size = sb.Capacity;
-                if (!QueryFullProcessImageName(h, 0, sb, ref size)) return false;
-                string path = sb.ToString(0, size);
-                string file = System.IO.Path.GetFileName(path);
-                if (string.Equals(file, "Forge Deck.exe", StringComparison.OrdinalIgnoreCase)) return true;
-                return string.Equals(file, "electron.exe", StringComparison.OrdinalIgnoreCase)
-                    && path.IndexOf("\\forge-deck", StringComparison.OrdinalIgnoreCase) >= 0;
+                if (!QueryFullProcessImageName(h, 0, sb, ref size)) return "";
+                return sb.ToString(0, size);
             }
             finally { CloseHandle(h); }
         }
@@ -785,9 +820,19 @@ namespace Keycap
             int msg = (int)wParam;
             bool down = msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN;
             bool handled = false;
+            int vk = (int)k.vkCode;
 
-            try { handled = Handle((int)k.vkCode, (int)k.scanCode, down); }
+            try { handled = Handle(vk, (int)k.scanCode, down); }
             catch { handled = false; }
+
+            // A modifier someone else is holding (see RepairOs). One we let
+            // through is down or up as it says; one we swallowed the up of is
+            // up, even if its down went through and Windows still holds it.
+            if ((vk >= VK_LSHIFT && vk <= VK_RMENU) || vk == VK_LWIN || vk == VK_RWIN)
+            {
+                if (!handled) _foreignDown[vk] = down;
+                else if (!down) _foreignDown[vk] = false;
+            }
 
             if (handled) return (IntPtr)1;
             return CallNextHookEx(_hook, code, wParam, ref k);
@@ -865,6 +910,81 @@ namespace Keycap
             if (!_cmdDown && !_optDown && !_winHeld && !_altHeld && !_altTabbing && _pressed.Count == 0) return;
             if (unchecked(Environment.TickCount - _lastEvent) < 4000) return;
             ReleaseAll();
+        }
+
+        // The modifiers RepairOs watches, and how the log names them.
+        static readonly int[] Mods = { VK_LSHIFT, 0xA1, VK_LCONTROL, 0xA3, VK_LMENU, VK_RMENU, VK_LWIN, VK_RWIN };
+        static readonly string[] ModNames = { "LShift", "RShift", "LCtrl", "RCtrl", "LAlt", "RAlt", "LWin", "RWin" };
+
+        // What we last sent for each key: down after an injected down, up after
+        // an injected up. Written by the hook thread and the injection thread
+        // alike, always before the key goes out (see Note).
+        static readonly bool[] _sentDown = new bool[256];
+        // A modifier someone else is holding: a physical key we let through,
+        // or another program's injected one. Set in Callback.
+        static readonly bool[] _foreignDown = new bool[256];
+        static readonly bool[] _suspect = new bool[256];    // stuck at the last tick too
+        static readonly bool[] _repaired = new bool[256];   // released, and logged, in this stuck spell
+
+        /// <summary>
+        /// Let go of a modifier Windows holds that nobody should be holding.
+        ///
+        /// Windows can still hold a modifier after we sent its release: SendInput
+        /// is silently dropped while an elevated window is in front, and the
+        /// hook thread and the injection thread can race each other. Nothing we
+        /// track then says anything is held, so Reconcile never fires - and we
+        /// swallow Option, so a real Alt key-up cannot clear it either. Every key
+        /// comes out as Alt+key until something does.
+        ///
+        /// So this compares what Windows holds against what we last sent and
+        /// what we have seen others hold. A key that is down with neither is
+        /// stuck. It has to be stuck on two ticks running before it is let go,
+        /// so a release still on its way is not mistaken for one that was lost,
+        /// and it is let go again on every tick after that: a release blocked by
+        /// an elevated window lands once focus has left it.
+        /// </summary>
+        static void RepairOs()
+        {
+            if (_hook == IntPtr.Zero || !_on)
+            {
+                Array.Clear(_suspect, 0, _suspect.Length);
+                Array.Clear(_repaired, 0, _repaired.Length);
+                return;
+            }
+            // An injection still queued or under way may be about to set
+            // things right, or about to press the key on purpose.
+            bool busy;
+            lock (_work) busy = _work.Count > 0;
+            if (busy || _injecting) return;
+
+            for (int n = 0; n < Mods.Length; n++)
+            {
+                int vk = Mods[n];
+                bool stuck = Down(vk) && !_sentDown[vk] && !_foreignDown[vk];
+                if (!stuck) { _suspect[vk] = false; _repaired[vk] = false; continue; }
+                if (!_suspect[vk]) { _suspect[vk] = true; continue; }     // first sighting
+
+                if (!_repaired[vk])
+                {
+                    _repaired[vk] = true;
+                    // Which app was in front says what dropped the release. One
+                    // that cannot be opened is elevated, which is the UIPI case.
+                    uint pid;
+                    string exe = System.IO.Path.GetFileName(ForegroundExe(out pid));
+                    string line = "repaired stuck " + ModNames[n] + " (foreground: "
+                                + (exe.Length > 0 ? exe : "elevated/unknown (pid " + pid + ")") + ")";
+                    OnUi(delegate { Program.LogInfo(line); });
+                }
+                // Through the queue, so it lands after anything still being sent.
+                // A lone Alt or Win release opens the menu bar or Start; the
+                // mask in between stops it, as in Bare.
+                int key = vk;
+                Post(delegate
+                {
+                    if (key == VK_LMENU || key == VK_RMENU || key == VK_LWIN || key == VK_RWIN) Tap(VK_MASK);
+                    Key(key, false);
+                });
+            }
         }
 
         static bool Handle(int vk, int sc, bool down)
