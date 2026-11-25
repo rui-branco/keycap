@@ -156,6 +156,14 @@ Windows never records them and `GetAsyncKeyState` reports them as up even while
 held. Recovery is by idle time instead — hold something with no key for a few
 seconds and it lets go — plus both Shift keys as a manual release.
 
+Windows can also be left holding a modifier Keycap has already let go of — a
+release is dropped, for instance, when an admin window is in front. So every
+0.7 s Keycap also checks for a Ctrl, Alt, Win or Shift that Windows still holds
+although Keycap released it and no key or program is holding it, and lets it go
+once it has been stuck for two checks in a row, retrying until the release
+lands. Each repair is logged to `%LOCALAPPDATA%\Keycap\error.log` with the app
+that was in front.
+
 A remapped key's release always undoes exactly what its press sent, even if the
 layout or a rule changed in between. And starting Keycap lets go of any key
 Windows still thinks is held, such as one left down by a Keycap that was closed
